@@ -1,0 +1,40 @@
+import { createClient } from '@/lib/supabase/server'
+import { redirect } from 'next/navigation'
+import type { Profile } from '@/lib/types/database'
+import { AorSettingsClient } from './aor-settings-client'
+
+export default async function AorSettingsPage() {
+  const supabase = createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) redirect('/login')
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', user.id)
+    .single()
+
+  if (!profile || (profile as Profile).role !== 'admin') {
+    redirect('/dashboard')
+  }
+
+  const { data: assignments } = await supabase
+    .from('aor_assignments')
+    .select('*, producer:profiles!producer_id(id, full_name, email)')
+    .order('category')
+
+  const { data: producers } = await supabase
+    .from('profiles')
+    .select('id, full_name, email')
+    .in('role', ['admin', 'producer'])
+    .order('full_name')
+
+  return (
+    <AorSettingsClient
+      assignments={assignments ?? []}
+      producers={producers ?? []}
+    />
+  )
+}
