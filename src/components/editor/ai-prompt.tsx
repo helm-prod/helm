@@ -140,7 +140,7 @@ export function AiPrompt({ language, currentCode, onGenerated }: AiPromptProps) 
             )}
             <div className="mt-2 flex items-center justify-between">
               <div className="flex items-center gap-3 text-[10px] text-brand-500">
-                <span>Powered by Gemini Flash</span>
+                <span>Powered by Claude Haiku</span>
                 {currentCode.trim() && <span>• AI can see your current code</span>}
               </div>
               <button
