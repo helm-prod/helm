@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { CodeEditor } from './code-editor'
 import { LivePreview } from './live-preview'
 import { FileSidebar } from './file-sidebar'
+import { AiPrompt } from './ai-prompt'
 import type { EditorFile, EditorFolder, EditorFileVersion, EditorLanguage, FileVisibility, Profile } from '@/lib/types/database'
 
 interface EditorWorkspaceProps {
@@ -222,7 +223,7 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
       <div className="flex flex-1 flex-col overflow-hidden">
         {activeFile ? (
           <>
-            <div className="flex items-center justify-between border-b border-brand-800 bg-brand-950/90 px-4 py-2 backdrop-blur-sm">
+            <div className="relative flex items-center justify-between border-b border-brand-800 bg-brand-950/90 px-4 py-2 backdrop-blur-sm">
               <div className="flex items-center gap-3">
                 <select value={activeFile.language} onChange={(e) => changeLanguage(e.target.value as EditorLanguage)}
                   className="rounded-md border border-brand-700 bg-brand-900 px-2 py-1 text-xs text-white outline-none focus:border-brand-500">
@@ -235,6 +236,7 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
                 </div>
               </div>
               <div className="flex items-center gap-2">
+                <AiPrompt language={activeFile.language} currentCode={editorContent} onGenerated={(code) => setEditorContent(code)} />
                 {activeFile.user_id === currentUser.id && (
                   <button onClick={toggleVisibility} className={`rounded-md border px-2 py-1 text-xs transition-colors ${activeFile.visibility === 'team' ? 'border-brand-600 bg-brand-800 text-brand-200' : 'border-brand-700 bg-brand-900 text-brand-400 hover:text-brand-200'}`}
                     title={activeFile.visibility === 'team' ? 'Visible to team' : 'Private'}>
