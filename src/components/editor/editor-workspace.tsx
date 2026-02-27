@@ -33,7 +33,8 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
   const [editorContent, setEditorContent] = useState('')
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved')
   const [splitRatio, setSplitRatio] = useState(55)
-  const [showPreview, setShowPreview] = useState(true)
+  const [showPreview, setShowPreview] = useState(false)
+  const [isDraggingSplit, setIsDraggingSplit] = useState(false)
   const [copyFeedback, setCopyFeedback] = useState(false)
   const [versionHistory, setVersionHistory] = useState<EditorFileVersion[]>([])
   const [showHistory, setShowHistory] = useState(false)
@@ -172,6 +173,7 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
   }, [editorContent])
 
   const handleSplitDragStart = useCallback(() => {
+    setIsDraggingSplit(true)
     isDraggingRef.current = true
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
@@ -183,6 +185,7 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
     }
     const handleUp = () => {
       isDraggingRef.current = false
+      setIsDraggingSplit(false)
       document.body.style.cursor = ''; document.body.style.userSelect = ''
       document.removeEventListener('mousemove', handleMove); document.removeEventListener('mouseup', handleUp)
     }
@@ -256,7 +259,7 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
               </div>
             </div>
             <div ref={containerRef} className="flex flex-1 overflow-hidden">
-              <div style={{ width: showPreview ? `${splitRatio}%` : '100%' }} className="h-full overflow-hidden">
+              <div style={{ width: showPreview ? `${splitRatio}%` : '100%' }} className={`h-full overflow-hidden ${isDraggingSplit ? 'pointer-events-none' : ''}`}>
                 <CodeEditor value={editorContent} language={activeFile.language} onChange={setEditorContent} onSave={manualSave} readOnly={activeFile.user_id !== currentUser.id} />
               </div>
               {showPreview && (
@@ -265,7 +268,7 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
                 </div>
               )}
               {showPreview && (
-                <div style={{ width: `${100 - splitRatio}%` }} className="h-full overflow-hidden">
+                <div style={{ width: `${100 - splitRatio}%` }} className={`h-full overflow-hidden ${isDraggingSplit ? 'pointer-events-none' : ''}`}>
                   <LivePreview content={editorContent} language={activeFile.language} />
                 </div>
               )}
