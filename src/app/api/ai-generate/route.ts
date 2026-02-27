@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY
+// Key read at request time
 const GEMINI_MODEL = 'gemini-2.0-flash'
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`
+// URL built inside handler
 
 const SYSTEM_PROMPT = `You are a code generator for the Navy Exchange (NEX) ecommerce website. You generate clean, production-ready HTML and CSS for promotional panels and web content.
 
@@ -27,6 +27,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  const GEMINI_API_KEY = process.env.GEMINI_API_KEY
+  const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`
   if (!GEMINI_API_KEY) {
     return NextResponse.json({ error: 'AI generation not configured. Add GEMINI_API_KEY to environment variables.' }, { status: 503 })
   }
