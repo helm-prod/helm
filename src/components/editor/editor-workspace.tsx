@@ -250,7 +250,10 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
                   <HistoryIcon className="h-3.5 w-3.5" />
                 </button>
                 <button onClick={() => setShowPreview(!showPreview)} className={`rounded-md border px-2 py-1 text-xs transition-colors ${showPreview ? 'border-brand-600 bg-brand-800 text-white' : 'border-brand-700 bg-brand-900 text-brand-400 hover:text-white'}`} title="Toggle Preview">
-                  <PreviewIcon className="h-3.5 w-3.5" />
+                  <span className="flex items-center gap-1">
+                    <PreviewIcon className="h-3.5 w-3.5" />
+                    Preview
+                  </span>
                 </button>
                 <button onClick={manualSave} className="rounded-md border border-brand-700 bg-brand-900 px-2.5 py-1 text-xs text-brand-300 transition-colors hover:bg-brand-800 hover:text-white" title="Save version (Cmd+S)">Save</button>
                 <button onClick={copyToClipboard} className={`relative rounded-md px-3 py-1 text-xs font-medium transition-all ${copyFeedback ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-nex-red text-white hover:bg-nex-redDark border border-nex-red'}`}>
