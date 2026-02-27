@@ -23,9 +23,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const apiKey = process.env.GEMINI_API_KEY
+  const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
-    return NextResponse.json({ error: 'AI generation not configured. Add GEMINI_API_KEY to environment variables.' }, { status: 503 })
+    return NextResponse.json({ error: 'AI generation not configured. Add ANTHROPIC_API_KEY to environment variables.' }, { status: 503 })
   }
 
   const body = await request.json()
@@ -46,41 +46,37 @@ export async function POST(request: NextRequest) {
     userMessage = `Generate ${language.toUpperCase()} code for the following:\n\n${prompt}\n\nReturn only the ${language.toUpperCase()} code.`
   }
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`
-
   try {
-    const response = await fetch(url, {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
       body: JSON.stringify({
-        system_instruction: {
-          parts: [{ text: SYSTEM_PROMPT }],
-        },
-        contents: [
-          {
-            role: 'user',
-            parts: [{ text: userMessage }],
-          },
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 4096,
+        system: SYSTEM_PROMPT,
+        messages: [
+          { role: 'user', content: userMessage },
         ],
-        generationConfig: {
-          temperature: 0.3,
-          maxOutputTokens: 8192,
-        },
       }),
     })
 
     if (!response.ok) {
       const errText = await response.text()
-      console.error('Gemini API error:', response.status, errText)
+      console.error('Anthropic API error:', response.status, errText)
       return NextResponse.json(
-        { error: `AI generation failed (${response.status}). ${errText}` },
+        { error: `AI generation failed (${response.status}). Please try again.` },
         { status: 502 }
       )
     }
 
     const data = await response.json()
-    let generatedCode = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
+    let generatedCode = data?.content?.[0]?.text ?? ''
 
+    // Strip markdown code fences if present
     generatedCode = generatedCode
       .replace(/^```(?:html|css|javascript|js)?\s*\n?/i, '')
       .replace(/\n?```\s*$/i, '')
