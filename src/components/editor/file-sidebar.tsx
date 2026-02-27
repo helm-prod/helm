@@ -103,17 +103,33 @@ export function FileSidebar({
     return p?.full_name?.split(' ')[0] ?? 'Unknown'
   }
 
+  function timeAgo(dateString: string): string {
+    const diffMs = Date.now() - new Date(dateString).getTime()
+    if (!Number.isFinite(diffMs) || diffMs < 0) return 'just now'
+    const minutes = Math.floor(diffMs / 60000)
+    if (minutes < 1) return 'just now'
+    if (minutes < 60) return `${minutes}m ago`
+    const hours = Math.floor(minutes / 60)
+    if (hours < 24) return `${hours}h ago`
+    const days = Math.floor(hours / 24)
+    if (days < 7) return `${days}d ago`
+    const weeks = Math.floor(days / 7)
+    return `${weeks}w ago`
+  }
+
   function renderFileItem(file: EditorFile, isTeam = false) {
     const isActive = file.id === activeFileId
     const langInfo = LANG_ICONS[file.language]
     const isEditing = editingId === file.id
+    const visibleTags = file.tags.slice(0, 3)
+    const extraTagCount = file.tags.length - visibleTags.length
 
     return (
       <button
         key={file.id}
         onClick={() => onSelectFile(file)}
         onContextMenu={(e) => !isTeam && handleContextMenu(e, file.id, 'file')}
-        className={`group flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-all duration-150 ${
+        className={`group flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-all duration-150 ${
           isActive
             ? 'bg-brand-800/80 text-white shadow-[inset_2px_0_0_0_#C8102E]'
             : 'text-brand-200 hover:bg-brand-800/40 hover:text-white'
@@ -126,15 +142,31 @@ export function FileSidebar({
             onKeyDown={(e) => { if (e.key === 'Enter') commitRename(file.id, 'file'); if (e.key === 'Escape') setEditingId(null) }}
             className="min-w-0 flex-1 bg-transparent text-sm text-white outline-none" onClick={(e) => e.stopPropagation()} />
         ) : (
-          <span className="min-w-0 flex-1 truncate">{file.title}</span>
+          <div className="min-w-0 flex flex-1 flex-col">
+            <div className="truncate">{file.title}</div>
+            {isTeam && (
+              <div className="text-[10px] text-brand-500">
+                {getOwnerName(file.user_id)} · {timeAgo(file.updated_at)}
+              </div>
+            )}
+          </div>
         )}
-        {file.visibility === 'team' && (
-          <span className="flex-shrink-0 text-[10px] text-brand-500" title="Visible to team"><TeamIcon className="h-3 w-3" /></span>
-        )}
-        {file.is_template && (
-          <span className="flex-shrink-0 rounded bg-brand-800 px-1 py-0.5 text-[9px] font-medium text-brand-500">TPL</span>
-        )}
-        {isTeam && <span className="flex-shrink-0 text-[10px] text-brand-500">{getOwnerName(file.user_id)}</span>}
+        <span className="ml-1 flex flex-shrink-0 flex-wrap items-center justify-end gap-1">
+          {file.visibility === 'team' && (
+            <span className="text-[10px] text-brand-500" title="Visible to team"><TeamIcon className="h-3 w-3" /></span>
+          )}
+          {file.is_template && (
+            <span className="rounded bg-brand-800 px-1 py-0.5 text-[9px] font-medium text-brand-500">TPL</span>
+          )}
+          {visibleTags.map((tag, index) => (
+            <span key={`${file.id}-tag-${index}`} className="max-w-[88px] truncate rounded-full bg-brand-800 px-1.5 py-0.5 text-[9px] text-brand-400" title={tag}>
+              {tag.length > 12 ? `${tag.slice(0, 12)}...` : tag}
+            </span>
+          ))}
+          {extraTagCount > 0 && (
+            <span className="rounded-full bg-brand-800 px-1.5 py-0.5 text-[9px] text-brand-400">+{extraTagCount}</span>
+          )}
+        </span>
       </button>
     )
   }

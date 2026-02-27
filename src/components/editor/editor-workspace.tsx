@@ -36,6 +36,8 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
   const [showPreview, setShowPreview] = useState(false)
   const [isDraggingSplit, setIsDraggingSplit] = useState(false)
   const [copyFeedback, setCopyFeedback] = useState(false)
+  const [isAddingTag, setIsAddingTag] = useState(false)
+  const [newTagValue, setNewTagValue] = useState('')
   const [versionHistory, setVersionHistory] = useState<EditorFileVersion[]>([])
   const [showHistory, setShowHistory] = useState(false)
   const [sidebarWidth, setSidebarWidth] = useState(240)
@@ -104,6 +106,8 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
     lastSavedContentRef.current = file.content
     setSaveStatus('saved')
     setShowHistory(false)
+    setIsAddingTag(false)
+    setNewTagValue('')
   }, [activeFile, editorContent, autoSaveFile])
 
   const createFile = useCallback(async (folderId: string | null) => {
@@ -171,6 +175,41 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
     setCopyFeedback(true)
     setTimeout(() => setCopyFeedback(false), 2000)
   }, [editorContent])
+
+  const normalizeTag = useCallback((tag: string) => tag.trim().toLowerCase().slice(0, 20), [])
+
+  const updateFileTags = useCallback(async (fileId: string, tags: string[]) => {
+    const cleanedTags = Array.from(new Set(tags.map(normalizeTag).filter(Boolean)))
+    const { error } = await supabase.from('editor_files').update({ tags: cleanedTags }).eq('id', fileId)
+    if (error) return
+    setFiles((prev) => prev.map((file) => (file.id === fileId ? { ...file, tags: cleanedTags } : file)))
+    setActiveFile((prev) => prev && prev.id === fileId ? { ...prev, tags: cleanedTags } : prev)
+  }, [normalizeTag, supabase])
+
+  const addTag = useCallback(async () => {
+    if (!activeFile || activeFile.user_id !== currentUser.id) return
+    const tag = normalizeTag(newTagValue)
+    if (!tag) {
+      setIsAddingTag(false)
+      setNewTagValue('')
+      return
+    }
+    const currentTags = Array.from(new Set((activeFile.tags ?? []).map(normalizeTag).filter(Boolean)))
+    if (currentTags.includes(tag)) {
+      setIsAddingTag(false)
+      setNewTagValue('')
+      return
+    }
+    await updateFileTags(activeFile.id, [...currentTags, tag])
+    setIsAddingTag(false)
+    setNewTagValue('')
+  }, [activeFile, currentUser.id, newTagValue, normalizeTag, updateFileTags])
+
+  const removeTag = useCallback(async (tagToRemove: string) => {
+    if (!activeFile || activeFile.user_id !== currentUser.id) return
+    const remaining = (activeFile.tags ?? []).filter((tag) => normalizeTag(tag) !== normalizeTag(tagToRemove))
+    await updateFileTags(activeFile.id, remaining)
+  }, [activeFile, currentUser.id, normalizeTag, updateFileTags])
 
   const companionFiles = useMemo<PreviewCompanionFile[] | undefined>(() => {
     if (!activeFile?.folder_id) return undefined
@@ -259,8 +298,8 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
       <div className="flex flex-1 flex-col overflow-hidden">
         {activeFile ? (
           <>
-            <div className="relative flex items-center justify-between border-b border-brand-800 bg-brand-950/90 px-4 py-2 backdrop-blur-sm">
-              <div className="flex items-center gap-3">
+            <div className="relative flex flex-wrap items-center gap-2 border-b border-brand-800 bg-brand-950/90 px-4 py-2 backdrop-blur-sm">
+              <div className="flex min-w-0 items-center gap-3">
                 <select value={activeFile.language} onChange={(e) => changeLanguage(e.target.value as EditorLanguage)}
                   className="rounded-md border border-brand-700 bg-brand-900 px-2 py-1 text-xs text-white outline-none focus:border-brand-500">
                   <option value="html">HTML</option><option value="css">CSS</option><option value="javascript">JavaScript</option>
@@ -271,7 +310,38 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
                   <span className={`text-[11px] ${status.color}`}>{status.text}</span>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              {activeFile.user_id === currentUser.id && (
+                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+                  {(activeFile.tags ?? []).map((tag, index) => (
+                    <span key={`${activeFile.id}-tag-${index}`} className="rounded-full border border-brand-700/50 bg-brand-800/60 px-2 py-0.5 text-[10px] text-brand-300">
+                      {tag}
+                      <button onClick={() => removeTag(tag)} className="ml-1 text-brand-500 hover:text-red-400" title={`Remove ${tag}`} aria-label={`Remove ${tag}`}>
+                        x
+                      </button>
+                    </span>
+                  ))}
+                  {isAddingTag ? (
+                    <input
+                      autoFocus
+                      value={newTagValue}
+                      onChange={(e) => setNewTagValue(e.target.value)}
+                      onBlur={() => { setIsAddingTag(false); setNewTagValue('') }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') { e.preventDefault(); addTag() }
+                        if (e.key === 'Escape') { e.preventDefault(); setIsAddingTag(false); setNewTagValue('') }
+                      }}
+                      maxLength={20}
+                      placeholder="tag"
+                      className="w-24 rounded-full border border-brand-700 bg-brand-900 px-2 py-0.5 text-[10px] text-brand-200 outline-none focus:border-brand-500"
+                    />
+                  ) : (
+                    <button onClick={() => setIsAddingTag(true)} className="rounded-full border border-dashed border-brand-700 px-2 py-0.5 text-[10px] text-brand-500 transition-colors hover:text-brand-300" title="Add tag">
+                      +
+                    </button>
+                  )}
+                </div>
+              )}
+              <div className="ml-auto flex items-center gap-2">
                 <AiPrompt language={activeFile.language} currentCode={editorContent} onGenerated={(code) => setEditorContent(code)} />
                 {activeFile.user_id === currentUser.id && (
                   <button onClick={toggleVisibility} className={`rounded-md border px-2 py-1 text-xs transition-colors ${activeFile.visibility === 'team' ? 'border-brand-600 bg-brand-800 text-brand-200' : 'border-brand-700 bg-brand-900 text-brand-400 hover:text-brand-200'}`}
