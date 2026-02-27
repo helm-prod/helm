@@ -424,3 +424,66 @@ export function computeGeneratedDescription(fields: {
   if (fields.item_description) parts.push(fields.item_description)
   return parts.join(' ').replace(/\s+/g, ' ').trim()
 }
+
+// ============================================================
+// Editor Types
+// ============================================================
+
+export type EditorLanguage = 'html' | 'css' | 'javascript'
+export type FileVisibility = 'private' | 'team'
+
+export interface EditorFolder {
+  id: string
+  user_id: string
+  name: string
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
+export interface EditorFile {
+  id: string
+  user_id: string
+  folder_id: string | null
+  title: string
+  language: EditorLanguage
+  content: string
+  visibility: FileVisibility
+  is_template: boolean
+  tags: string[]
+  created_at: string
+  updated_at: string
+  // Joined
+  owner?: Profile
+  folder?: EditorFolder
+}
+
+export interface EditorFileVersion {
+  id: string
+  file_id: string
+  content: string
+  created_by: string | null
+  created_at: string
+  // Joined
+  creator?: Profile
+}
+
+export interface EditorFileShare {
+  id: string
+  file_id: string
+  shared_with: string
+  can_edit: boolean
+  created_at: string
+}
+
+export const EDITOR_LANGUAGE_LABELS: Record<EditorLanguage, string> = {
+  html: 'HTML',
+  css: 'CSS',
+  javascript: 'JavaScript',
+}
+
+export const EDITOR_LANGUAGE_EXTENSIONS: Record<EditorLanguage, string> = {
+  html: '.html',
+  css: '.css',
+  javascript: '.js',
+}

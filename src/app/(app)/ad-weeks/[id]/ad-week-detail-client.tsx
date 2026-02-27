@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import {
   type AdWeek,
@@ -24,6 +25,7 @@ import {
 import { PanelStatusBadge } from '@/components/panel-status-badge'
 import { PanelTypeBadge } from '@/components/panel-type-badge'
 import { PriorityCircle } from '@/components/priority-circle'
+import { CodeEditorPanel } from '@/components/code-editor/CodeEditorPanel'
 
 interface ProducerOption {
   id: string
@@ -101,8 +103,12 @@ export function AdWeekDetailClient({
   producers,
   aorAssignments,
 }: Props) {
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
   const supabase = createClient()
   const canEdit = profile.role === 'admin' || profile.role === 'producer'
+  const isAdmin = profile.role === 'admin'
 
   const [adWeek, setAdWeek] = useState(initialAdWeek)
   const [events, setEvents] = useState(initialEvents)
@@ -116,9 +122,9 @@ export function AdWeekDetailClient({
   const [filterCategory, setFilterCategory] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   const [myPanelsOnly, setMyPanelsOnly] = useState(false)
+  const [includeArchived, setIncludeArchived] = useState(false)
 
   const [collapsedLocations, setCollapsedLocations] = useState<Record<string, boolean>>({})
-  const [expandedPanels, setExpandedPanels] = useState<Record<string, boolean>>({})
 
   const refreshPanels = useCallback(async () => {
     const { data } = await supabase
@@ -132,6 +138,38 @@ export function AdWeekDetailClient({
       setPanels(data)
     }
   }, [supabase, adWeek.id])
+
+  const selectedPanelId = searchParams.get('panel')
+
+  const selectedPanel = useMemo(
+    () => panels.find((panel) => panel.id === selectedPanelId) ?? null,
+    [panels, selectedPanelId]
+  )
+
+  useEffect(() => {
+    if (selectedPanelId && !selectedPanel) {
+      const params = new URLSearchParams(searchParams.toString())
+      params.delete('panel')
+      const next = params.toString()
+      router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false })
+    }
+  }, [pathname, router, searchParams, selectedPanel, selectedPanelId])
+
+  const openPanelDrawer = useCallback(
+    (panelId: string) => {
+      const params = new URLSearchParams(searchParams.toString())
+      params.set('panel', panelId)
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+    },
+    [pathname, router, searchParams]
+  )
+
+  const closePanelDrawer = useCallback(() => {
+    const params = new URLSearchParams(searchParams.toString())
+    params.delete('panel')
+    const next = params.toString()
+    router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false })
+  }, [pathname, router, searchParams])
 
   function getProducerForCategory(category: string): string | null {
     const aorProducer = aorAssignments.find((assignment) => assignment.category === category)?.producer_id ?? null
@@ -150,8 +188,26 @@ export function AdWeekDetailClient({
     }
   }
 
+  async function handleReopenArchivedPanels() {
+    if (!isAdmin) return
+
+    const { error } = await supabase
+      .from('panels')
+      .update({
+        archived: false,
+        archived_at: null,
+      })
+      .eq('ad_week_id', adWeek.id)
+      .eq('archived', true)
+
+    if (!error) {
+      await refreshPanels()
+    }
+  }
+
   const filteredPanels = useMemo(() => {
     return panels.filter((panel) => {
+      if (!includeArchived && panel.archived) return false
       if (filterAssignee === 'unassigned' && panel.assigned_to) return false
       if (filterAssignee && filterAssignee !== 'unassigned' && panel.assigned_to !== filterAssignee) return false
       if (filterStatus && panel.status !== filterStatus) return false
@@ -169,6 +225,7 @@ export function AdWeekDetailClient({
     })
   }, [
     panels,
+    includeArchived,
     filterAssignee,
     filterStatus,
     filterCategory,
@@ -209,22 +266,25 @@ export function AdWeekDetailClient({
     })
   }, [locationKeys])
 
-  const completionDenominator = panels.filter((panel) => panel.status !== 'cancelled').length
-  const completedCount = panels.filter((panel) => panel.status === 'complete').length
+  const activePanels = useMemo(() => panels.filter((panel) => !panel.archived), [panels])
+  const archivedPanelCount = panels.length - activePanels.length
+
+  const completionDenominator = activePanels.filter((panel) => panel.status !== 'cancelled').length
+  const completedCount = activePanels.filter((panel) => panel.status === 'complete').length
   const progressPercent = completionDenominator === 0 ? 0 : Math.round((completedCount / completionDenominator) * 100)
 
   const stats = {
-    total: panels.length,
+    total: activePanels.length,
     completed: completedCount,
-    inProgress: panels.filter((panel) => ['in_production', 'proofing', 'revision'].includes(panel.status)).length,
-    pending: panels.filter((panel) => panel.status === 'pending').length,
-    needsDesign: panels.filter((panel) => panel.status === 'design_needed' || panel.design_needed).length,
+    inProgress: activePanels.filter((panel) => ['in_production', 'proofing', 'revision'].includes(panel.status)).length,
+    pending: activePanels.filter((panel) => panel.status === 'pending').length,
+    needsDesign: activePanels.filter((panel) => panel.status === 'design_needed' || panel.design_needed).length,
   }
 
   const producerBreakdown = useMemo(() => {
     const map = new Map<string, { name: string; count: number }>()
 
-    for (const panel of panels) {
+    for (const panel of activePanels) {
       const name = panel.assignee?.full_name || 'Unassigned'
       const current = map.get(name)
       if (current) {
@@ -235,7 +295,7 @@ export function AdWeekDetailClient({
     }
 
     return Array.from(map.values()).sort((a, b) => b.count - a.count)
-  }, [panels])
+  }, [activePanels])
 
   const dateRangeLabel = useMemo(() => {
     if (adWeek.start_date && adWeek.end_date) {
@@ -270,6 +330,11 @@ export function AdWeekDetailClient({
               <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${AD_WEEK_STATUS_COLORS[adWeek.status]}`}>
                 {AD_WEEK_STATUS_LABELS[adWeek.status]}
               </span>
+              {archivedPanelCount > 0 && (
+                <span className="inline-flex items-center rounded-full border border-fuchsia-500/40 bg-fuchsia-500/10 px-2.5 py-1 text-xs font-medium text-fuchsia-200">
+                  {archivedPanelCount} archived
+                </span>
+              )}
               <span className="text-brand-500">{dateRangeLabel}</span>
             </div>
           </div>
@@ -304,6 +369,15 @@ export function AdWeekDetailClient({
               Upload More
             </Link>
 
+            {isAdmin && archivedPanelCount > 0 && (
+              <button
+                onClick={() => void handleReopenArchivedPanels()}
+                className="rounded-full border border-fuchsia-500/40 bg-fuchsia-500/10 px-4 py-2 text-sm font-medium text-fuchsia-100 transition-colors hover:bg-fuchsia-500/20"
+              >
+                Reopen Archived ({archivedPanelCount})
+              </button>
+            )}
+
             {canEdit && (
               <button
                 onClick={() => setShowAddEvent(true)}
@@ -328,7 +402,7 @@ export function AdWeekDetailClient({
         <div className="mt-5">
           <div className="mb-1 flex items-center justify-between text-xs text-brand-400">
             <span>
-              {completedCount} of {completionDenominator || panels.length} panels complete
+              {completedCount} of {completionDenominator || activePanels.length} panels complete
             </span>
             <span>{progressPercent}%</span>
           </div>
@@ -339,7 +413,7 @@ export function AdWeekDetailClient({
       </div>
 
       <div className="rounded-2xl border border-brand-800 bg-brand-900 p-5">
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-6">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-7">
           <select
             value={filterAssignee}
             onChange={(event) => setFilterAssignee(event.target.value)}
@@ -411,6 +485,16 @@ export function AdWeekDetailClient({
             />
             My Panels Only
           </label>
+
+          <label className="inline-flex items-center gap-2 rounded-xl border border-brand-700 px-3 py-2 text-sm text-brand-300">
+            <input
+              type="checkbox"
+              checked={includeArchived}
+              onChange={(event) => setIncludeArchived(event.target.checked)}
+              className="rounded border-brand-700 bg-brand-900"
+            />
+            Include Archived
+          </label>
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-3">
@@ -442,6 +526,7 @@ export function AdWeekDetailClient({
               setFilterCategory('')
               setSearchQuery('')
               setMyPanelsOnly(false)
+              setIncludeArchived(false)
             }}
             className="rounded-full border border-brand-700 px-3 py-1.5 text-xs text-brand-300 transition-colors hover:border-brand-600 hover:text-white"
           >
@@ -486,20 +571,26 @@ export function AdWeekDetailClient({
                   {!isCollapsed && (
                     <div className="space-y-3 p-4">
                       {locationPanels.map((panel) => {
-                        const isExpanded = expandedPanels[panel.id] ?? false
+                        const isSelected = selectedPanelId === panel.id
                         return (
                           <article
                             key={panel.id}
-                            className="rounded-xl border border-brand-800 bg-brand-900/70 transition-colors hover:border-brand-600"
+                            className={`rounded-xl border transition-colors ${
+                              panel.archived
+                                ? 'border-brand-800/70 bg-brand-900/40 opacity-70'
+                                : isSelected
+                                  ? 'border-blue-500/40 bg-blue-500/10'
+                                  : 'border-brand-800 bg-brand-900/70 hover:border-brand-600'
+                            }`}
                           >
                             <div
                               role="button"
                               tabIndex={0}
-                              onClick={() => setExpandedPanels((current) => ({ ...current, [panel.id]: !isExpanded }))}
+                              onClick={() => openPanelDrawer(panel.id)}
                               onKeyDown={(event) => {
                                 if (event.key === 'Enter' || event.key === ' ') {
                                   event.preventDefault()
-                                  setExpandedPanels((current) => ({ ...current, [panel.id]: !isExpanded }))
+                                  openPanelDrawer(panel.id)
                                 }
                               }}
                               className="flex w-full flex-wrap items-center gap-3 p-3 text-left"
@@ -516,7 +607,7 @@ export function AdWeekDetailClient({
                                 </div>
                               </div>
 
-                              <div className="flex items-center gap-3">
+                              <div className="flex items-center gap-3" onClick={(event) => event.stopPropagation()}>
                                 <ProducerAvatar name={panel.assignee?.full_name || 'Unassigned'} />
                                 <PanelStatusBadge
                                   status={panel.status}
@@ -531,37 +622,6 @@ export function AdWeekDetailClient({
                                 )}
                               </div>
                             </div>
-
-                            {isExpanded && (
-                              <div className="border-t border-brand-800 px-4 py-3">
-                                <div className="grid grid-cols-1 gap-3 text-sm text-brand-300 sm:grid-cols-2">
-                                  <Field label="Event" value={panel.event ? getEventDisplayLabel(panel.event) : 'None'} />
-                                  <Field label="Assigned Producer" value={panel.assignee?.full_name || 'Unassigned'} />
-                                  <Field label="Prefix" value={panel.prefix || '-'} />
-                                  <Field label="Value" value={panel.value ? `${panel.dollar_or_percent === '$' ? '$' : ''}${panel.value}${panel.dollar_or_percent === '%' ? '%' : ''}` : '-'} />
-                                  <Field label="Suffix" value={panel.suffix || '-'} />
-                                  <Field label="Item Description" value={panel.item_description || '-'} />
-                                  <Field label="Exclusions" value={panel.exclusions || '-'} />
-                                  <Field label="Special Dates" value={panel.special_dates || '-'} />
-                                  <Field label="Image Reference" value={panel.image_reference || '-'} />
-                                  <Field label="Direction" value={panel.direction || '-'} />
-                                  <Field label="Link Intent" value={panel.link_intent || '-'} />
-                                  <Field label="Link URL" value={panel.link_url || '-'} />
-                                  <Field label="Brand/Category Tracking" value={panel.brand_category_tracking || '-'} />
-                                  <Field label="Source" value={panel.source} />
-                                  <Field label="Design Needed" value={panel.design_needed ? 'Yes' : 'No'} />
-                                  <Field label="Carryover" value={panel.is_carryover ? 'Yes' : 'No'} />
-                                  <Field label="Pickup" value={panel.is_pickup ? 'Yes' : 'No'} />
-                                  <Field label="Pickup Reference" value={panel.pickup_reference || '-'} />
-                                </div>
-                                {panel.notes && (
-                                  <div className="mt-3 rounded-lg border border-brand-800 bg-brand-900/50 px-3 py-2 text-sm text-brand-300">
-                                    <p className="text-xs uppercase tracking-wide text-brand-500">Notes</p>
-                                    <p className="mt-1 whitespace-pre-wrap">{panel.notes}</p>
-                                  </div>
-                                )}
-                              </div>
-                            )}
                           </article>
                         )
                       })}
@@ -627,15 +687,17 @@ export function AdWeekDetailClient({
           }}
         />
       )}
-    </div>
-  )
-}
 
-function Field({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <p className="text-xs uppercase tracking-wide text-brand-500">{label}</p>
-      <p className="mt-0.5 text-sm text-brand-200">{value}</p>
+      {selectedPanel && (
+        <CodeEditorPanel
+          panel={selectedPanel as unknown as Panel}
+          canEdit={canEdit || selectedPanel.assigned_to === profile.id}
+          onClose={closePanelDrawer}
+          onPanelUpdated={() => {
+            void refreshPanels()
+          }}
+        />
+      )}
     </div>
   )
 }

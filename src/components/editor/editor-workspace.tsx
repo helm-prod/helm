@@ -1,0 +1,332 @@
+'use client'
+
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { createClient } from '@/lib/supabase/client'
+import { CodeEditor } from './code-editor'
+import { LivePreview } from './live-preview'
+import { FileSidebar } from './file-sidebar'
+import type { EditorFile, EditorFolder, EditorFileVersion, EditorLanguage, FileVisibility, Profile } from '@/lib/types/database'
+
+interface EditorWorkspaceProps {
+  currentUser: Profile
+  profiles: Profile[]
+  initialFiles: EditorFile[]
+  initialFolders: EditorFolder[]
+  initialTeamFiles: EditorFile[]
+}
+
+type SaveStatus = 'saved' | 'unsaved' | 'saving' | 'error'
+
+const DEFAULT_CONTENT: Record<EditorLanguage, string> = {
+  html: '<!-- Start writing HTML -->\n<div class="container">\n  <h1>Hello, Helm</h1>\n  <p>Start building your panel code here.</p>\n</div>',
+  css: '/* Start writing CSS */\n.container {\n  max-width: 1200px;\n  margin: 0 auto;\n  padding: 16px;\n}\n\nh1 {\n  color: #003057;\n}',
+  javascript: '// Start writing JavaScript\nconsole.log("Hello from Helm editor!");',
+}
+
+export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFolders, initialTeamFiles }: EditorWorkspaceProps) {
+  const supabase = createClient()
+  const [files, setFiles] = useState<EditorFile[]>(initialFiles)
+  const [folders, setFolders] = useState<EditorFolder[]>(initialFolders)
+  const [teamFiles, setTeamFiles] = useState<EditorFile[]>(initialTeamFiles)
+  const [activeFile, setActiveFile] = useState<EditorFile | null>(null)
+  const [editorContent, setEditorContent] = useState('')
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved')
+  const [splitRatio, setSplitRatio] = useState(55)
+  const [showPreview, setShowPreview] = useState(true)
+  const [copyFeedback, setCopyFeedback] = useState(false)
+  const [versionHistory, setVersionHistory] = useState<EditorFileVersion[]>([])
+  const [showHistory, setShowHistory] = useState(false)
+  const [sidebarWidth, setSidebarWidth] = useState(240)
+
+  const autoSaveTimerRef = useRef<NodeJS.Timeout>()
+  const lastSavedContentRef = useRef('')
+  const isDraggingRef = useRef(false)
+  const isDraggingSidebarRef = useRef(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!activeFile) return
+    if (editorContent === lastSavedContentRef.current) { setSaveStatus('saved'); return }
+    setSaveStatus('unsaved')
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
+    autoSaveTimerRef.current = setTimeout(() => { autoSaveFile() }, 2000)
+    return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editorContent])
+
+  const autoSaveFile = useCallback(async () => {
+    if (!activeFile) return
+    setSaveStatus('saving')
+    const { error } = await supabase.from('editor_files').update({ content: editorContent, updated_at: new Date().toISOString() }).eq('id', activeFile.id)
+    if (error) { setSaveStatus('error') } else {
+      lastSavedContentRef.current = editorContent
+      setSaveStatus('saved')
+      setFiles((prev) => prev.map((f) => (f.id === activeFile.id ? { ...f, content: editorContent, updated_at: new Date().toISOString() } : f)))
+      setActiveFile((prev) => prev ? { ...prev, content: editorContent, updated_at: new Date().toISOString() } : null)
+    }
+  }, [activeFile, editorContent, supabase])
+
+  const manualSave = useCallback(async () => {
+    if (!activeFile) return
+    setSaveStatus('saving')
+    const { error: updateError } = await supabase.from('editor_files').update({ content: editorContent, updated_at: new Date().toISOString() }).eq('id', activeFile.id)
+    if (updateError) { setSaveStatus('error'); return }
+    await supabase.from('editor_file_versions').insert({ file_id: activeFile.id, content: editorContent, created_by: currentUser.id })
+    const { data: versions } = await supabase.from('editor_file_versions').select('id').eq('file_id', activeFile.id).order('created_at', { ascending: false })
+    if (versions && versions.length > 20) {
+      const toDelete = versions.slice(20).map((v) => v.id)
+      await supabase.from('editor_file_versions').delete().in('id', toDelete)
+    }
+    lastSavedContentRef.current = editorContent
+    setSaveStatus('saved')
+    setFiles((prev) => prev.map((f) => (f.id === activeFile.id ? { ...f, content: editorContent, updated_at: new Date().toISOString() } : f)))
+    setActiveFile((prev) => prev ? { ...prev, content: editorContent, updated_at: new Date().toISOString() } : null)
+  }, [activeFile, editorContent, currentUser.id, supabase])
+
+  const loadVersionHistory = useCallback(async () => {
+    if (!activeFile) return
+    const { data } = await supabase.from('editor_file_versions').select('*, creator:profiles!created_by(full_name)').eq('file_id', activeFile.id).order('created_at', { ascending: false }).limit(20)
+    setVersionHistory((data as EditorFileVersion[]) ?? [])
+    setShowHistory(true)
+  }, [activeFile, supabase])
+
+  const restoreVersion = useCallback((version: EditorFileVersion) => {
+    setEditorContent(version.content)
+    setShowHistory(false)
+  }, [])
+
+  const selectFile = useCallback((file: EditorFile) => {
+    if (activeFile && editorContent !== lastSavedContentRef.current) autoSaveFile()
+    setActiveFile(file)
+    setEditorContent(file.content)
+    lastSavedContentRef.current = file.content
+    setSaveStatus('saved')
+    setShowHistory(false)
+  }, [activeFile, editorContent, autoSaveFile])
+
+  const createFile = useCallback(async (folderId: string | null) => {
+    const { data, error } = await supabase.from('editor_files').insert({
+      user_id: currentUser.id, folder_id: folderId, title: 'Untitled', language: 'html' as EditorLanguage, content: DEFAULT_CONTENT['html'], visibility: 'private' as FileVisibility,
+    }).select().single()
+    if (error || !data) return
+    const newFile = data as EditorFile
+    setFiles((prev) => [newFile, ...prev])
+    selectFile(newFile)
+  }, [currentUser.id, supabase, selectFile])
+
+  const createFolder = useCallback(async (name: string) => {
+    const { data, error } = await supabase.from('editor_folders').insert({ user_id: currentUser.id, name, sort_order: folders.length }).select().single()
+    if (error || !data) return
+    setFolders((prev) => [...prev, data as EditorFolder])
+  }, [currentUser.id, folders.length, supabase])
+
+  const renameFile = useCallback(async (fileId: string, title: string) => {
+    await supabase.from('editor_files').update({ title }).eq('id', fileId)
+    setFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, title } : f)))
+    if (activeFile?.id === fileId) setActiveFile((prev) => prev ? { ...prev, title } : null)
+  }, [activeFile, supabase])
+
+  const deleteFile = useCallback(async (fileId: string) => {
+    await supabase.from('editor_files').delete().eq('id', fileId)
+    setFiles((prev) => prev.filter((f) => f.id !== fileId))
+    if (activeFile?.id === fileId) { setActiveFile(null); setEditorContent('') }
+  }, [activeFile, supabase])
+
+  const renameFolder = useCallback(async (folderId: string, name: string) => {
+    await supabase.from('editor_folders').update({ name }).eq('id', folderId)
+    setFolders((prev) => prev.map((f) => (f.id === folderId ? { ...f, name } : f)))
+  }, [supabase])
+
+  const deleteFolder = useCallback(async (folderId: string) => {
+    await supabase.from('editor_files').update({ folder_id: null }).eq('folder_id', folderId)
+    await supabase.from('editor_folders').delete().eq('id', folderId)
+    setFiles((prev) => prev.map((f) => (f.folder_id === folderId ? { ...f, folder_id: null } : f)))
+    setFolders((prev) => prev.filter((f) => f.id !== folderId))
+  }, [supabase])
+
+  const moveFile = useCallback(async (fileId: string, folderId: string | null) => {
+    await supabase.from('editor_files').update({ folder_id: folderId }).eq('id', fileId)
+    setFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, folder_id: folderId } : f)))
+  }, [supabase])
+
+  const changeLanguage = useCallback(async (lang: EditorLanguage) => {
+    if (!activeFile) return
+    await supabase.from('editor_files').update({ language: lang }).eq('id', activeFile.id)
+    setFiles((prev) => prev.map((f) => (f.id === activeFile.id ? { ...f, language: lang } : f)))
+    setActiveFile((prev) => prev ? { ...prev, language: lang } : null)
+  }, [activeFile, supabase])
+
+  const toggleVisibility = useCallback(async () => {
+    if (!activeFile) return
+    const newVis: FileVisibility = activeFile.visibility === 'private' ? 'team' : 'private'
+    await supabase.from('editor_files').update({ visibility: newVis }).eq('id', activeFile.id)
+    setFiles((prev) => prev.map((f) => (f.id === activeFile.id ? { ...f, visibility: newVis } : f)))
+    setActiveFile((prev) => prev ? { ...prev, visibility: newVis } : null)
+  }, [activeFile, supabase])
+
+  const copyToClipboard = useCallback(async () => {
+    await navigator.clipboard.writeText(editorContent)
+    setCopyFeedback(true)
+    setTimeout(() => setCopyFeedback(false), 2000)
+  }, [editorContent])
+
+  const handleSplitDragStart = useCallback(() => {
+    isDraggingRef.current = true
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    const handleMove = (e: MouseEvent) => {
+      if (!isDraggingRef.current || !containerRef.current) return
+      const rect = containerRef.current.getBoundingClientRect()
+      const pct = ((e.clientX - rect.left) / rect.width) * 100
+      setSplitRatio(Math.max(25, Math.min(75, pct)))
+    }
+    const handleUp = () => {
+      isDraggingRef.current = false
+      document.body.style.cursor = ''; document.body.style.userSelect = ''
+      document.removeEventListener('mousemove', handleMove); document.removeEventListener('mouseup', handleUp)
+    }
+    document.addEventListener('mousemove', handleMove); document.addEventListener('mouseup', handleUp)
+  }, [])
+
+  const handleSidebarDragStart = useCallback(() => {
+    isDraggingSidebarRef.current = true
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    const handleMove = (e: MouseEvent) => { if (!isDraggingSidebarRef.current) return; setSidebarWidth(Math.max(180, Math.min(400, e.clientX))) }
+    const handleUp = () => {
+      isDraggingSidebarRef.current = false
+      document.body.style.cursor = ''; document.body.style.userSelect = ''
+      document.removeEventListener('mousemove', handleMove); document.removeEventListener('mouseup', handleUp)
+    }
+    document.addEventListener('mousemove', handleMove); document.addEventListener('mouseup', handleUp)
+  }, [])
+
+  const saveStatusDisplay = {
+    saved: { text: 'Saved', color: 'text-emerald-400', dot: 'bg-emerald-400' },
+    unsaved: { text: 'Unsaved', color: 'text-amber-400', dot: 'bg-amber-400 animate-pulse' },
+    saving: { text: 'Saving...', color: 'text-brand-400', dot: 'bg-brand-400 animate-pulse' },
+    error: { text: 'Save failed', color: 'text-red-400', dot: 'bg-red-400' },
+  }
+  const status = saveStatusDisplay[saveStatus]
+
+  return (
+    <div className="flex h-screen overflow-hidden -m-8">
+      <div style={{ width: sidebarWidth, minWidth: sidebarWidth }}>
+        <FileSidebar files={files} folders={folders} teamFiles={teamFiles} activeFileId={activeFile?.id ?? null} currentUserId={currentUser.id} profiles={profiles}
+          onSelectFile={selectFile} onCreateFile={createFile} onCreateFolder={createFolder} onRenameFile={renameFile} onDeleteFile={deleteFile}
+          onRenameFolder={renameFolder} onDeleteFolder={deleteFolder} onMoveFile={moveFile} />
+      </div>
+      <div onMouseDown={handleSidebarDragStart} className="group flex w-1 cursor-col-resize items-center justify-center hover:bg-brand-700/30">
+        <div className="h-8 w-0.5 rounded-full bg-brand-700 opacity-0 transition-opacity group-hover:opacity-100" />
+      </div>
+      <div className="flex flex-1 flex-col overflow-hidden">
+        {activeFile ? (
+          <>
+            <div className="flex items-center justify-between border-b border-brand-800 bg-brand-950/90 px-4 py-2 backdrop-blur-sm">
+              <div className="flex items-center gap-3">
+                <select value={activeFile.language} onChange={(e) => changeLanguage(e.target.value as EditorLanguage)}
+                  className="rounded-md border border-brand-700 bg-brand-900 px-2 py-1 text-xs text-white outline-none focus:border-brand-500">
+                  <option value="html">HTML</option><option value="css">CSS</option><option value="javascript">JavaScript</option>
+                </select>
+                <span className="text-sm font-medium text-white">{activeFile.title}</span>
+                <div className="flex items-center gap-1.5">
+                  <div className={`h-1.5 w-1.5 rounded-full ${status.dot}`} />
+                  <span className={`text-[11px] ${status.color}`}>{status.text}</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {activeFile.user_id === currentUser.id && (
+                  <button onClick={toggleVisibility} className={`rounded-md border px-2 py-1 text-xs transition-colors ${activeFile.visibility === 'team' ? 'border-brand-600 bg-brand-800 text-brand-200' : 'border-brand-700 bg-brand-900 text-brand-400 hover:text-brand-200'}`}
+                    title={activeFile.visibility === 'team' ? 'Visible to team' : 'Private'}>
+                    {activeFile.visibility === 'team' ? '👥 Team' : '🔒 Private'}
+                  </button>
+                )}
+                <button onClick={loadVersionHistory} className="rounded-md border border-brand-700 bg-brand-900 px-2 py-1 text-xs text-brand-300 transition-colors hover:bg-brand-800 hover:text-white" title="Version History">
+                  <HistoryIcon className="h-3.5 w-3.5" />
+                </button>
+                <button onClick={() => setShowPreview(!showPreview)} className={`rounded-md border px-2 py-1 text-xs transition-colors ${showPreview ? 'border-brand-600 bg-brand-800 text-white' : 'border-brand-700 bg-brand-900 text-brand-400 hover:text-white'}`} title="Toggle Preview">
+                  <PreviewIcon className="h-3.5 w-3.5" />
+                </button>
+                <button onClick={manualSave} className="rounded-md border border-brand-700 bg-brand-900 px-2.5 py-1 text-xs text-brand-300 transition-colors hover:bg-brand-800 hover:text-white" title="Save version (Cmd+S)">Save</button>
+                <button onClick={copyToClipboard} className={`relative rounded-md px-3 py-1 text-xs font-medium transition-all ${copyFeedback ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-nex-red text-white hover:bg-nex-redDark border border-nex-red'}`}>
+                  {copyFeedback ? (<span className="flex items-center gap-1"><CheckIcon className="h-3 w-3" /> Copied</span>) : (<span className="flex items-center gap-1"><ClipboardIcon className="h-3 w-3" /> Copy</span>)}
+                </button>
+              </div>
+            </div>
+            <div ref={containerRef} className="flex flex-1 overflow-hidden">
+              <div style={{ width: showPreview ? `${splitRatio}%` : '100%' }} className="h-full overflow-hidden">
+                <CodeEditor value={editorContent} language={activeFile.language} onChange={setEditorContent} onSave={manualSave} readOnly={activeFile.user_id !== currentUser.id} />
+              </div>
+              {showPreview && (
+                <div onMouseDown={handleSplitDragStart} className="group flex w-1.5 cursor-col-resize items-center justify-center bg-brand-950 hover:bg-brand-800/50">
+                  <div className="h-12 w-0.5 rounded-full bg-brand-700 transition-colors group-hover:bg-brand-500" />
+                </div>
+              )}
+              {showPreview && (
+                <div style={{ width: `${100 - splitRatio}%` }} className="h-full overflow-hidden">
+                  <LivePreview content={editorContent} language={activeFile.language} />
+                </div>
+              )}
+            </div>
+            <div className="flex items-center justify-between border-t border-brand-800 bg-brand-950/90 px-4 py-1 text-[11px] text-brand-500">
+              <div className="flex items-center gap-4">
+                <span>{activeFile.language.toUpperCase()}</span>
+                <span>{editorContent.length.toLocaleString()} chars</span>
+                <span>{editorContent.split('\n').length} lines</span>
+              </div>
+              <div className="flex items-center gap-4"><span>Tab: 2 spaces</span><span>UTF-8</span></div>
+            </div>
+          </>
+        ) : (
+          <div className="flex flex-1 items-center justify-center">
+            <div className="text-center">
+              <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-2xl border border-brand-800 bg-brand-900/50">
+                <CodeBracketIcon className="h-10 w-10 text-brand-600" />
+              </div>
+              <h2 className="text-lg font-semibold text-white">No file open</h2>
+              <p className="mt-1 text-sm text-brand-400">Select a file from the sidebar or create a new one.</p>
+              <button onClick={() => createFile(null)} className="mt-4 rounded-lg bg-nex-red px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-nex-redDark">+ New File</button>
+            </div>
+          </div>
+        )}
+      </div>
+      {showHistory && (
+        <div className="w-72 border-l border-brand-800 bg-brand-950/90">
+          <div className="flex items-center justify-between border-b border-brand-800 px-4 py-3">
+            <span className="text-xs font-semibold uppercase tracking-wider text-brand-400">Version History</span>
+            <button onClick={() => setShowHistory(false)} className="text-brand-500 hover:text-white"><CloseIcon className="h-4 w-4" /></button>
+          </div>
+          <div className="overflow-y-auto p-2">
+            {versionHistory.length === 0 ? (
+              <p className="px-2 py-4 text-center text-xs text-brand-500">No versions yet. Press Cmd+S to save a version.</p>
+            ) : (versionHistory.map((v) => (
+              <button key={v.id} onClick={() => restoreVersion(v)} className="flex w-full flex-col gap-0.5 rounded-lg px-3 py-2 text-left transition-colors hover:bg-brand-800/50">
+                <span className="text-xs text-white">{new Date(v.created_at).toLocaleDateString()} {new Date(v.created_at).toLocaleTimeString()}</span>
+                <span className="text-[10px] text-brand-500">{v.content.length.toLocaleString()} chars{(v as unknown as { creator?: { full_name: string } }).creator?.full_name && ` · ${(v as unknown as { creator: { full_name: string } }).creator.full_name}`}</span>
+              </button>
+            )))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function HistoryIcon({ className }: { className?: string }) {
+  return (<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>)
+}
+function PreviewIcon({ className }: { className?: string }) {
+  return (<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>)
+}
+function CheckIcon({ className }: { className?: string }) {
+  return (<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>)
+}
+function ClipboardIcon({ className }: { className?: string }) {
+  return (<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184" /></svg>)
+}
+function CodeBracketIcon({ className }: { className?: string }) {
+  return (<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M17.25 6.75L22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3l-4.5 16.5" /></svg>)
+}
+function CloseIcon({ className }: { className?: string }) {
+  return (<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>)
+}

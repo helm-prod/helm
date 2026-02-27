@@ -42,6 +42,7 @@ export default async function AppLayout({
       .select('id', { count: 'exact', head: true })
       .eq('assigned_to', user.id)
       .in('ad_week_id', activeWeekIds)
+      .eq('archived', false)
       .not('status', 'in', '("complete","cancelled")')
     myQueueCount = count ?? 0
   }

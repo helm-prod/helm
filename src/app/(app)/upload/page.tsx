@@ -41,6 +41,10 @@ export default function UploadPage() {
   const [googleSheetUrl, setGoogleSheetUrl] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [archivePrompt, setArchivePrompt] = useState<{
+    panelCount: number
+    weekLabel: string
+  } | null>(null)
 
   const isCalendarUpload = uploadType === 'ad_week_calendar'
 
@@ -75,8 +79,7 @@ export default function UploadPage() {
     return detectWeekFromFilename(file.name)
   }, [file])
 
-  async function handleUpload(e: React.FormEvent) {
-    e.preventDefault()
+  async function runUpload({ archiveExisting = false }: { archiveExisting?: boolean } = {}) {
 
     if (uploadMethod === 'file' && !file) {
       setError('Select a file to continue.')
@@ -93,6 +96,9 @@ export default function UploadPage() {
 
     const formData = new FormData()
     formData.append('upload_type', uploadType)
+    if (archiveExisting) {
+      formData.append('archive_existing', 'true')
+    }
 
     if (uploadMethod === 'file' && file) {
       formData.append('file', file)
@@ -115,6 +121,14 @@ export default function UploadPage() {
       const data = await res.json()
 
       if (!res.ok) {
+        if (res.status === 409 && data.requires_archive_confirmation) {
+          setArchivePrompt({
+            panelCount: Number(data.panel_count ?? 0),
+            weekLabel: data.ad_week_label || `WK ${data.week_number ?? '-'}`,
+          })
+          setLoading(false)
+          return
+        }
         setError(data.error || 'Upload failed')
         setLoading(false)
         return
@@ -126,6 +140,12 @@ export default function UploadPage() {
       setError(err instanceof Error ? err.message : 'Upload failed')
       setLoading(false)
     }
+  }
+
+  async function handleUpload(e: React.FormEvent) {
+    e.preventDefault()
+    setArchivePrompt(null)
+    await runUpload()
   }
 
   const inputClass =
@@ -312,6 +332,40 @@ export default function UploadPage() {
       </section>
 
       <RecentUploads />
+
+      {archivePrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-brand-700 bg-brand-900 p-6">
+            <h2 className="text-lg font-semibold text-white">Archive Existing Panels?</h2>
+            <p className="mt-2 text-sm text-brand-300">
+              {archivePrompt.weekLabel} already has {archivePrompt.panelCount} panels. What would you like to do?
+            </p>
+
+            <div className="mt-5 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setArchivePrompt(null)
+                  void runUpload({ archiveExisting: true })
+                }}
+                className="rounded-full bg-nex-red px-4 py-2 text-sm font-medium text-white hover:bg-nex-redDark"
+              >
+                Archive &amp; Import
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setArchivePrompt(null)
+                  setLoading(false)
+                }}
+                className="rounded-full border border-brand-700 px-4 py-2 text-sm text-brand-300 hover:border-brand-600 hover:text-white"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

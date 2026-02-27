@@ -41,6 +41,7 @@ export default async function MyQueuePage() {
       )
       .eq('assigned_to', user.id)
       .in('ad_week_id', activeWeekIds)
+      .eq('archived', false)
       .not('status', 'in', '("complete","cancelled")')
       .order('page_location', { ascending: true })
       .order('priority', { ascending: true })

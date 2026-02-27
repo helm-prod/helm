@@ -32,11 +32,16 @@ export default async function AdWeeksPage() {
   // Get panel counts per ad_week
   const { data: panelCounts } = await supabase
     .from('panels')
-    .select('ad_week_id')
+    .select('ad_week_id, archived')
 
   const countMap: Record<string, number> = {}
+  const archivedCountMap: Record<string, number> = {}
   for (const row of panelCounts ?? []) {
-    countMap[row.ad_week_id] = (countMap[row.ad_week_id] || 0) + 1
+    if (row.archived) {
+      archivedCountMap[row.ad_week_id] = (archivedCountMap[row.ad_week_id] || 0) + 1
+    } else {
+      countMap[row.ad_week_id] = (countMap[row.ad_week_id] || 0) + 1
+    }
   }
 
   return (
@@ -132,7 +137,14 @@ export default async function AdWeeksPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-brand-400">
-                        {countMap[week.id] ?? 0}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span>{countMap[week.id] ?? 0}</span>
+                          {(archivedCountMap[week.id] ?? 0) > 0 && (
+                            <span className="inline-flex items-center rounded-full border border-fuchsia-500/40 bg-fuchsia-500/10 px-2 py-0.5 text-xs text-fuchsia-200">
+                              +{archivedCountMap[week.id]} archived
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-brand-400 text-xs">
                         {minDate && maxDate

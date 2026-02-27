@@ -7,6 +7,7 @@ import {
   PANEL_CATEGORIES,
   type PanelType,
 } from '@/lib/types/database'
+import { mergeTemplateHtml, normalizeTemplateName } from '@/lib/codegen'
 
 const VALID_PANEL_TYPES: PanelType[] = ['Marketing Header', 'Banner', 'Left Nav', 'A', 'B', 'C']
 const CATEGORY_LOOKUP = new Map<string, PanelCategory>(
@@ -472,7 +473,7 @@ async function runTurnInImport({
   uploadedBy: string
   targetWeek: { id: string; week_number: number; year: number; label: string | null }
 }) {
-  const [aorRes, profileRes, existingEventsRes] = await Promise.all([
+  const [aorRes, profileRes, existingEventsRes, pageTemplatesRes] = await Promise.all([
     supabase.from('aor_assignments').select('producer_id, category'),
     supabase
       .from('profiles')
@@ -482,6 +483,7 @@ async function runTurnInImport({
       .from('ad_week_events')
       .select('id, event_code, event_name, start_date, end_date')
       .eq('ad_week_id', targetWeek.id),
+    supabase.from('page_templates').select('id, name'),
   ])
 
   const aorMap = new Map<string, string>()
@@ -492,6 +494,42 @@ async function runTurnInImport({
   const producerNames = new Map<string, string>()
   for (const producer of profileRes.data ?? []) {
     producerNames.set(producer.id, producer.full_name || 'Unknown')
+  }
+
+  const pageTemplateByName = new Map<string, { id: string; name: string }>()
+  for (const template of pageTemplatesRes.data ?? []) {
+    pageTemplateByName.set(normalizeTemplateName(template.name), {
+      id: template.id,
+      name: template.name,
+    })
+  }
+
+  const codeTemplatesByKey = new Map<
+    string,
+    {
+      page_template_id: string
+      slot_name: string
+      html_template: string
+      variable_map: Record<string, string>
+    }
+  >()
+
+  if (pageTemplateByName.size > 0) {
+    const pageTemplateIds = Array.from(new Set(Array.from(pageTemplateByName.values()).map((value) => value.id)))
+    const { data: codeTemplates } = await supabase
+      .from('code_templates')
+      .select('page_template_id, slot_name, html_template, variable_map')
+      .in('page_template_id', pageTemplateIds)
+
+    for (const template of codeTemplates ?? []) {
+      const key = `${template.page_template_id}::${normalizeLookupKey(template.slot_name)}`
+      codeTemplatesByKey.set(key, {
+        page_template_id: template.page_template_id,
+        slot_name: template.slot_name,
+        html_template: template.html_template || '',
+        variable_map: (template.variable_map as Record<string, string>) ?? {},
+      })
+    }
   }
 
   const headerRow = rows[0] ?? []
@@ -589,6 +627,8 @@ async function runTurnInImport({
   >()
 
   const seenImportPositions = new Map<string, number>()
+  let pageTemplateMatches = 0
+  let generatedCodeCount = 0
 
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i]
@@ -705,6 +745,12 @@ async function runTurnInImport({
       item_description: itemDescRaw,
     })
 
+    const matchedPageTemplate = pageTemplateByName.get(normalizeTemplateName(rawPageLocation)) ?? null
+    if (matchedPageTemplate) {
+      pageTemplateMatches += 1
+    }
+    const matchedPageTemplateId = matchedPageTemplate?.id ?? null
+
     const imageRefUpper = (imgRefRaw ?? '').toUpperCase()
     const isCarryover = /\bC\/O\b/.test(imageRefUpper)
     const isPickup = /\bP\/\s?U(?:P)?\b/.test(imageRefUpper)
@@ -715,6 +761,38 @@ async function runTurnInImport({
     const noAorMatchNote = aorProducerId
       ? null
       : `Unassigned - no AOR match for category "${rawCategory}"`
+
+    const templateKey =
+      matchedPageTemplateId && panelType
+        ? `${matchedPageTemplateId}::${normalizeLookupKey(panelType)}`
+        : null
+    const matchedCodeTemplate = templateKey ? codeTemplatesByKey.get(templateKey) : null
+
+    const generatedCode = matchedCodeTemplate
+      ? mergeTemplateHtml({
+          htmlTemplate: matchedCodeTemplate.html_template,
+          variableMap: matchedCodeTemplate.variable_map,
+          panel: {
+            category,
+            page_location: rawPageLocation,
+            panel_type: panelType,
+            prefix: prefixRaw,
+            value: valueRaw,
+            dollar_or_percent: validDollarPercent,
+            suffix: suffixRaw,
+            item_description: itemDescRaw,
+            exclusions: exclusionsRaw,
+            generated_description: generatedDesc || null,
+            image_reference: imgRefRaw,
+            link_intent: linkIntentRaw,
+            link_url: linkUrlRaw,
+          },
+        })
+      : null
+
+    if (generatedCode) {
+      generatedCodeCount += 1
+    }
 
     const { error: panelError } = await supabase.from('panels').insert({
       ad_week_id: targetWeek.id,
@@ -743,6 +821,9 @@ async function runTurnInImport({
       pickup_reference: pickupReference,
       source: uploadType === 'corrections' ? 'correction' : 'upload',
       upload_id: uploadId,
+      page_template_id: matchedPageTemplateId,
+      generated_code: generatedCode,
+      code_status: generatedCode ? 'generated' : 'none',
     })
 
     if (panelError) {
@@ -786,6 +867,10 @@ async function runTurnInImport({
       .sort((a, b) => b.count - a.count),
     conflicts: conflictItems,
     aor_assignment_summary: Array.from(assignmentByProducer.values()).sort((a, b) => b.panel_count - a.panel_count),
+    page_template_matching: {
+      matched_panels: pageTemplateMatches,
+      generated_code_panels: generatedCodeCount,
+    },
     events_detected: detectedEvents.map((event) => ({
       event_code: eventCodeByColumn.get(event.columnIndex) ?? event.event_code,
       event_name: event.event_name,
@@ -831,6 +916,9 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData()
     const uploadMode = getUploadMode((formData.get('upload_type') as string) || null)
     const adWeekId = normalizeWhitespace(String(formData.get('ad_week_id') ?? '')) || null
+    const archiveExisting =
+      normalizeWhitespace(String(formData.get('archive_existing') ?? '')).toLowerCase() === 'true' ||
+      normalizeWhitespace(String(formData.get('archive_existing') ?? '')) === '1'
 
     const source = await resolveSpreadsheetSource(formData, uploadMode)
 
@@ -906,6 +994,41 @@ export async function POST(request: NextRequest) {
 
       if (!targetWeek) {
         return NextResponse.json({ error: 'Unable to resolve ad week' }, { status: 500 })
+      }
+
+      if (uploadMode === 'turn_in') {
+        const { count } = await supabase
+          .from('panels')
+          .select('id', { count: 'exact', head: true })
+          .eq('ad_week_id', targetWeek.id)
+          .eq('archived', false)
+
+        const existingCount = count ?? 0
+        if (existingCount > 0 && !archiveExisting) {
+          return NextResponse.json(
+            {
+              error: `${targetWeek.label || `WK ${targetWeek.week_number}`} already has ${existingCount} panels.`,
+              requires_archive_confirmation: true,
+              panel_count: existingCount,
+              ad_week_id: targetWeek.id,
+              ad_week_label: targetWeek.label || `WK ${targetWeek.week_number}`,
+              week_number: targetWeek.week_number,
+              year: targetWeek.year,
+            },
+            { status: 409 }
+          )
+        }
+
+        if (existingCount > 0 && archiveExisting) {
+          await supabase
+            .from('panels')
+            .update({
+              archived: true,
+              archived_at: new Date().toISOString(),
+            })
+            .eq('ad_week_id', targetWeek.id)
+            .eq('archived', false)
+        }
       }
     }
 

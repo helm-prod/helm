@@ -2,11 +2,12 @@
 
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import type { Panel, Profile } from '@/lib/types/database'
 import { PanelStatusBadge } from '@/components/panel-status-badge'
 import { PanelTypeBadge } from '@/components/panel-type-badge'
 import { PriorityCircle } from '@/components/priority-circle'
+import { CodeEditorPanel } from '@/components/code-editor/CodeEditorPanel'
 
 type QueuePanel = Omit<Panel, 'ad_week' | 'event' | 'assignee'> & {
   ad_week: {
@@ -44,17 +45,39 @@ export function MyQueueClient({
   nextWeekIso: string
 }) {
   const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
   const [tab, setTab] = useState<QueueTab>('all')
+  const [panelState, setPanelState] = useState(panels)
+
+  const selectedPanelId = searchParams.get('panel')
+  const selectedPanel = useMemo(
+    () => panelState.find((panel) => panel.id === selectedPanelId) ?? null,
+    [panelState, selectedPanelId]
+  )
+
+  function openPanelDrawer(panelId: string) {
+    const params = new URLSearchParams(searchParams.toString())
+    params.set('panel', panelId)
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+  }
+
+  function closePanelDrawer() {
+    const params = new URLSearchParams(searchParams.toString())
+    params.delete('panel')
+    const next = params.toString()
+    router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false })
+  }
 
   const filteredPanels = useMemo(() => {
-    if (tab === 'all') return panels
+    if (tab === 'all') return panelState
 
     if (tab === 'this') {
-      return panels.filter((panel) => adWeekIncludesDate(panel.ad_week, todayIso))
+      return panelState.filter((panel) => adWeekIncludesDate(panel.ad_week, todayIso))
     }
 
-    return panels.filter((panel) => adWeekIncludesDate(panel.ad_week, nextWeekIso))
-  }, [panels, tab, todayIso, nextWeekIso])
+    return panelState.filter((panel) => adWeekIncludesDate(panel.ad_week, nextWeekIso))
+  }, [panelState, tab, todayIso, nextWeekIso])
 
   const groupedByWeek = useMemo(() => {
     const map = new Map<string, { weekId: string; weekLabel: string; year: number; weekNumber: number; panels: QueuePanel[] }>()
@@ -145,8 +168,24 @@ export function MyQueueClient({
                           {locationPanels
                             .sort((a, b) => (a.priority ?? Number.MAX_SAFE_INTEGER) - (b.priority ?? Number.MAX_SAFE_INTEGER))
                             .map((panel) => (
-                              <article key={panel.id} className="rounded-xl border border-brand-800 bg-brand-900/70 p-3 transition-colors hover:border-brand-600">
-                                <div className="flex flex-wrap items-center gap-3">
+                              <article
+                                key={panel.id}
+                                className={`rounded-xl border bg-brand-900/70 p-3 transition-colors hover:border-brand-600 ${
+                                  selectedPanelId === panel.id ? 'border-blue-500/40 bg-blue-500/10' : 'border-brand-800'
+                                }`}
+                              >
+                                <div
+                                  role="button"
+                                  tabIndex={0}
+                                  onClick={() => openPanelDrawer(panel.id)}
+                                  onKeyDown={(event) => {
+                                    if (event.key === 'Enter' || event.key === ' ') {
+                                      event.preventDefault()
+                                      openPanelDrawer(panel.id)
+                                    }
+                                  }}
+                                  className="flex flex-wrap items-center gap-3"
+                                >
                                   <PriorityCircle value={panel.priority} />
 
                                   <div className="min-w-0 flex-1">
@@ -164,12 +203,14 @@ export function MyQueueClient({
                                     <p className="text-xs text-brand-500">{panel.category}</p>
                                   </div>
 
-                                  <PanelStatusBadge
-                                    status={panel.status}
-                                    panelId={panel.id}
-                                    canEdit={true}
-                                    onUpdate={() => router.refresh()}
-                                  />
+                                  <div onClick={(event) => event.stopPropagation()}>
+                                    <PanelStatusBadge
+                                      status={panel.status}
+                                      panelId={panel.id}
+                                      canEdit={true}
+                                      onUpdate={() => router.refresh()}
+                                    />
+                                  </div>
                                 </div>
                               </article>
                             ))}
@@ -181,6 +222,17 @@ export function MyQueueClient({
             )
           })}
         </div>
+      )}
+
+      {selectedPanel && (
+        <CodeEditorPanel
+          panel={selectedPanel as unknown as Panel}
+          canEdit={true}
+          onClose={closePanelDrawer}
+          onPanelUpdated={(updatedPanel) => {
+            setPanelState((current) => current.map((panel) => (panel.id === updatedPanel.id ? { ...panel, ...updatedPanel } : panel)))
+          }}
+        />
       )}
     </div>
   )
