@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import type { EditorLanguage } from '@/lib/types/database'
 
 interface AiPromptProps {
@@ -93,74 +94,78 @@ export function AiPrompt({ language, currentCode, onGenerated }: AiPromptProps) 
     )
   }
 
-  return (
-    <div ref={containerRef} className="fixed inset-x-0 top-[52px] z-50 mx-auto max-w-2xl px-4">
-      <div className="rounded-xl border border-purple-500/30 bg-brand-950 shadow-2xl shadow-purple-500/5">
-        <div className="flex items-center gap-2 border-b border-brand-800/50 px-4 py-2.5">
-          <SparkleIcon className="h-4 w-4 text-purple-400" />
-          <span className="text-xs font-semibold text-purple-300">AI Generate</span>
-          <span className="rounded bg-brand-800 px-1.5 py-0.5 text-[10px] text-brand-400">
-            {language.toUpperCase()}
-          </span>
-          {currentCode.trim() && (
-            <span className="rounded bg-purple-500/10 px-1.5 py-0.5 text-[10px] text-purple-400">
-              has context
+  return createPortal(
+    <div ref={containerRef} className="fixed inset-0 z-[9999]">
+      <div className="absolute inset-0" />
+      <div className="absolute left-1/2 top-14 w-full max-w-2xl -translate-x-1/2 px-4">
+        <div className="rounded-xl border border-purple-500/30 bg-brand-950 shadow-2xl shadow-purple-500/5">
+          <div className="flex items-center gap-2 border-b border-brand-800/50 px-4 py-2.5">
+            <SparkleIcon className="h-4 w-4 text-purple-400" />
+            <span className="text-xs font-semibold text-purple-300">AI Generate</span>
+            <span className="rounded bg-brand-800 px-1.5 py-0.5 text-[10px] text-brand-400">
+              {language.toUpperCase()}
             </span>
-          )}
-          <div className="flex-1" />
-          <button
-            onClick={() => { if (!isGenerating) { setIsOpen(false); setPrompt(''); setError(null) } }}
-            className="text-brand-500 hover:text-white"
-          >
-            <CloseSmIcon className="h-4 w-4" />
-          </button>
-        </div>
-        <div className="p-3">
-          <textarea
-            ref={inputRef}
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={
-              currentCode.trim()
-                ? 'Describe what to change... (Enter to send, Shift+Enter for newline)'
-                : 'Describe what to build... (Enter to send, Shift+Enter for newline)'
-            }
-            rows={2}
-            disabled={isGenerating}
-            className="w-full resize-none rounded-lg border border-brand-700 bg-brand-900/80 px-3 py-2 text-sm text-white placeholder-brand-500 outline-none transition-colors focus:border-purple-500/50 disabled:opacity-50"
-          />
-          {error && (
-            <div className="mt-2 rounded-md bg-red-500/10 px-3 py-1.5 text-xs text-red-400">
-              {error}
-            </div>
-          )}
-          <div className="mt-2 flex items-center justify-between">
-            <div className="flex items-center gap-3 text-[10px] text-brand-500">
-              <span>Powered by Gemini Flash</span>
-              {currentCode.trim() && <span>• AI can see your current code</span>}
-            </div>
+            {currentCode.trim() && (
+              <span className="rounded bg-purple-500/10 px-1.5 py-0.5 text-[10px] text-purple-400">
+                has context
+              </span>
+            )}
+            <div className="flex-1" />
             <button
-              onClick={generate}
-              disabled={!prompt.trim() || isGenerating}
-              className="flex items-center gap-1.5 rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-medium text-white transition-all hover:bg-purple-500 disabled:opacity-40 disabled:hover:bg-purple-600"
+              onClick={() => { if (!isGenerating) { setIsOpen(false); setPrompt(''); setError(null) } }}
+              className="text-brand-500 hover:text-white"
             >
-              {isGenerating ? (
-                <>
-                  <LoadingDots />
-                  <span>Generating...</span>
-                </>
-              ) : (
-                <>
-                  <SparkleIcon className="h-3 w-3" />
-                  <span>Generate</span>
-                </>
-              )}
+              <CloseSmIcon className="h-4 w-4" />
             </button>
+          </div>
+          <div className="p-3">
+            <textarea
+              ref={inputRef}
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={
+                currentCode.trim()
+                  ? 'Describe what to change... (Enter to send, Shift+Enter for newline)'
+                  : 'Describe what to build... (Enter to send, Shift+Enter for newline)'
+              }
+              rows={2}
+              disabled={isGenerating}
+              className="w-full resize-none rounded-lg border border-brand-700 bg-brand-900/80 px-3 py-2 text-sm text-white placeholder-brand-500 outline-none transition-colors focus:border-purple-500/50 disabled:opacity-50"
+            />
+            {error && (
+              <div className="mt-2 rounded-md bg-red-500/10 px-3 py-1.5 text-xs text-red-400">
+                {error}
+              </div>
+            )}
+            <div className="mt-2 flex items-center justify-between">
+              <div className="flex items-center gap-3 text-[10px] text-brand-500">
+                <span>Powered by Gemini Flash</span>
+                {currentCode.trim() && <span>• AI can see your current code</span>}
+              </div>
+              <button
+                onClick={generate}
+                disabled={!prompt.trim() || isGenerating}
+                className="flex items-center gap-1.5 rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-medium text-white transition-all hover:bg-purple-500 disabled:opacity-40 disabled:hover:bg-purple-600"
+              >
+                {isGenerating ? (
+                  <>
+                    <LoadingDots />
+                    <span>Generating...</span>
+                  </>
+                ) : (
+                  <>
+                    <SparkleIcon className="h-3 w-3" />
+                    <span>Generate</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
 
