@@ -94,7 +94,7 @@ export function AiPrompt({ language, currentCode, onGenerated }: AiPromptProps) 
   }
 
   return (
-    <div ref={containerRef} className="absolute left-0 right-0 top-full z-50 mx-4 mt-1">
+    <div ref={containerRef} className="fixed inset-x-0 top-[52px] z-50 mx-auto max-w-2xl px-4">
       <div className="rounded-xl border border-purple-500/30 bg-brand-950 shadow-2xl shadow-purple-500/5">
         <div className="flex items-center gap-2 border-b border-brand-800/50 px-4 py-2.5">
           <SparkleIcon className="h-4 w-4 text-purple-400" />
