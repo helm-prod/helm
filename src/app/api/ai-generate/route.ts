@@ -1,10 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 
-// Key read at request time
-const GEMINI_MODEL = 'gemini-2.0-flash'
-// URL built inside handler
-
 const SYSTEM_PROMPT = `You are a code generator for the Navy Exchange (NEX) ecommerce website. You generate clean, production-ready HTML and CSS for promotional panels and web content.
 
 RULES:
@@ -27,9 +23,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const GEMINI_API_KEY = process.env.GEMINI_API_KEY
-  const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`
-  if (!GEMINI_API_KEY) {
+  const apiKey = process.env.GEMINI_API_KEY
+  if (!apiKey) {
     return NextResponse.json({ error: 'AI generation not configured. Add GEMINI_API_KEY to environment variables.' }, { status: 503 })
   }
 
@@ -51,8 +46,10 @@ export async function POST(request: NextRequest) {
     userMessage = `Generate ${language.toUpperCase()} code for the following:\n\n${prompt}\n\nReturn only the ${language.toUpperCase()} code.`
   }
 
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`
+
   try {
-    const response = await fetch(GEMINI_URL, {
+    const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -76,7 +73,7 @@ export async function POST(request: NextRequest) {
       const errText = await response.text()
       console.error('Gemini API error:', response.status, errText)
       return NextResponse.json(
-        { error: 'AI generation failed. Please try again.' },
+        { error: `AI generation failed (${response.status}). ${errText}` },
         { status: 502 }
       )
     }
