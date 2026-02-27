@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { CodeEditor } from './code-editor'
-import { LivePreview } from './live-preview'
+import { LivePreview, composeDocument, type PreviewCompanionFile } from './live-preview'
 import { FileSidebar } from './file-sidebar'
 import { AiPrompt } from './ai-prompt'
 import type { EditorFile, EditorFolder, EditorFileVersion, EditorLanguage, FileVisibility, Profile } from '@/lib/types/database'
@@ -172,6 +172,38 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
     setTimeout(() => setCopyFeedback(false), 2000)
   }, [editorContent])
 
+  const companionFiles = useMemo<PreviewCompanionFile[] | undefined>(() => {
+    if (!activeFile?.folder_id) return undefined
+    return files
+      .filter((file) => file.folder_id === activeFile.folder_id && file.id !== activeFile.id && file.language !== activeFile.language)
+      .map((file) => ({ language: file.language, content: file.content }))
+  }, [activeFile, files])
+
+  const downloadContent = useCallback((filename: string, fileContent: string, mimeType: string) => {
+    const blob = new Blob([fileContent], { type: mimeType })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  }, [])
+
+  const downloadCurrentFile = useCallback(() => {
+    if (!activeFile) return
+    const extension = activeFile.language === 'html' ? 'html' : activeFile.language === 'css' ? 'css' : 'js'
+    const mimeType = activeFile.language === 'html' ? 'text/html;charset=utf-8' : activeFile.language === 'css' ? 'text/css;charset=utf-8' : 'text/javascript;charset=utf-8'
+    downloadContent(`${activeFile.title}.${extension}`, editorContent, mimeType)
+  }, [activeFile, downloadContent, editorContent])
+
+  const downloadComposedFile = useCallback(() => {
+    if (!activeFile || activeFile.language !== 'html' || !companionFiles?.length) return
+    const composedHtml = composeDocument({ content: editorContent, language: 'html', companionFiles })
+    downloadContent(`${activeFile.title}-composed.html`, composedHtml, 'text/html;charset=utf-8')
+  }, [activeFile, companionFiles, downloadContent, editorContent])
+
   const handleSplitDragStart = useCallback(() => {
     setIsDraggingSplit(true)
     isDraggingRef.current = true
@@ -212,6 +244,7 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
     error: { text: 'Save failed', color: 'text-red-400', dot: 'bg-red-400' },
   }
   const status = saveStatusDisplay[saveStatus]
+  const showComposedDownload = activeFile?.language === 'html' && Boolean(companionFiles?.length)
 
   return (
     <div className="flex h-screen overflow-hidden -m-8">
@@ -256,6 +289,17 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
                   </span>
                 </button>
                 <button onClick={manualSave} className="rounded-md border border-brand-700 bg-brand-900 px-2.5 py-1 text-xs text-brand-300 transition-colors hover:bg-brand-800 hover:text-white" title="Save version (Cmd+S)">Save</button>
+                <button onClick={downloadCurrentFile} className="rounded-md border border-brand-700 bg-brand-900 px-2 py-1 text-xs text-brand-300 transition-colors hover:bg-brand-800 hover:text-white" title="Download file">
+                  <DownloadIcon className="h-3.5 w-3.5" />
+                </button>
+                {showComposedDownload && (
+                  <button onClick={downloadComposedFile} className="rounded-md border border-brand-700 bg-brand-900 px-2 py-1 text-xs text-brand-300 transition-colors hover:bg-brand-800 hover:text-white" title="Download with CSS/JS from folder">
+                    <span className="flex items-center gap-1">
+                      <DownloadIcon className="h-3.5 w-3.5" />
+                      Composed
+                    </span>
+                  </button>
+                )}
                 <button onClick={copyToClipboard} className={`relative rounded-md px-3 py-1 text-xs font-medium transition-all ${copyFeedback ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-nex-red text-white hover:bg-nex-redDark border border-nex-red'}`}>
                   {copyFeedback ? (<span className="flex items-center gap-1"><CheckIcon className="h-3 w-3" /> Copied</span>) : (<span className="flex items-center gap-1"><ClipboardIcon className="h-3 w-3" /> Copy</span>)}
                 </button>
@@ -272,7 +316,7 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
               )}
               {showPreview && (
                 <div style={{ width: `${100 - splitRatio}%` }} className={`h-full overflow-hidden ${isDraggingSplit ? 'pointer-events-none' : ''}`}>
-                  <LivePreview content={editorContent} language={activeFile.language} />
+                  <LivePreview content={editorContent} language={activeFile.language} companionFiles={companionFiles} />
                 </div>
               )}
             </div>
@@ -331,6 +375,9 @@ function CheckIcon({ className }: { className?: string }) {
 }
 function ClipboardIcon({ className }: { className?: string }) {
   return (<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184" /></svg>)
+}
+function DownloadIcon({ className }: { className?: string }) {
+  return (<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 15.75v2.25a2.25 2.25 0 002.25 2.25h12a2.25 2.25 0 002.25-2.25v-2.25M12 3v12m0 0l-3.75-3.75M12 15l3.75-3.75" /></svg>)
 }
 function CodeBracketIcon({ className }: { className?: string }) {
   return (<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M17.25 6.75L22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3l-4.5 16.5" /></svg>)

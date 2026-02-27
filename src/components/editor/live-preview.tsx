@@ -3,18 +3,80 @@
 import { useMemo } from 'react'
 import type { EditorLanguage } from '@/lib/types/database'
 
+export interface PreviewCompanionFile {
+  language: EditorLanguage
+  content: string
+}
+
 interface LivePreviewProps {
   content: string
   language: EditorLanguage
+  companionFiles?: PreviewCompanionFile[]
 }
 
-export function LivePreview({ content, language }: LivePreviewProps) {
-  const srcdoc = useMemo(() => {
-    if (language === 'html') {
-      if (content.includes('<html') || content.includes('<!DOCTYPE') || content.includes('<!doctype')) {
-        return content
-      }
-      return `<!DOCTYPE html>
+interface ComposeDocumentOptions {
+  content: string
+  language: EditorLanguage
+  companionFiles?: PreviewCompanionFile[]
+}
+
+function joinCompanionContent(companionFiles: PreviewCompanionFile[] | undefined, language: EditorLanguage): string {
+  if (!companionFiles?.length) return ''
+  return companionFiles
+    .filter((file) => file.language === language)
+    .map((file) => file.content)
+    .filter((content) => content.trim().length > 0)
+    .join('\n\n')
+}
+
+function injectCompanionsIntoDocument(documentContent: string, cssContent: string, jsContent: string): string {
+  let composed = documentContent
+
+  if (cssContent) {
+    const cssBlock = `<style>\n${cssContent}\n</style>\n`
+    if (/<\/head>/i.test(composed)) {
+      composed = composed.replace(/<\/head>/i, `${cssBlock}</head>`)
+    } else if (/<html[^>]*>/i.test(composed)) {
+      composed = composed.replace(/<html[^>]*>/i, `$&\n<head>\n${cssBlock}</head>`)
+    } else {
+      composed = `${cssBlock}${composed}`
+    }
+  }
+
+  if (jsContent) {
+    const jsBlock = `<script>\n${jsContent}\n</script>\n`
+    if (/<\/body>/i.test(composed)) {
+      composed = composed.replace(/<\/body>/i, `${jsBlock}</body>`)
+    } else if (/<\/html>/i.test(composed)) {
+      composed = composed.replace(/<\/html>/i, `${jsBlock}</html>`)
+    } else {
+      composed = `${composed}\n${jsBlock}`
+    }
+  }
+
+  return composed
+}
+
+export function composeDocument({ content, language, companionFiles }: ComposeDocumentOptions): string {
+  const companionCss = joinCompanionContent(companionFiles, 'css')
+  const companionJs = joinCompanionContent(companionFiles, 'javascript')
+
+  if (language === 'html') {
+    if (content.includes('<html') || content.includes('<!DOCTYPE') || content.includes('<!doctype')) {
+      if (!companionCss && !companionJs) return content
+      return injectCompanionsIntoDocument(content, companionCss, companionJs)
+    }
+
+    const companionCssBlock = companionCss ? `
+  <style>
+${companionCss}
+  </style>` : ''
+    const companionJsBlock = companionJs ? `
+  <script>
+${companionJs}
+  </script>` : ''
+
+    return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
@@ -23,13 +85,19 @@ export function LivePreview({ content, language }: LivePreviewProps) {
     body { margin: 0; padding: 16px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
     img { max-width: 100%; height: auto; }
   </style>
+${companionCssBlock}
 </head>
-<body>${content}</body>
+<body>${content}${companionJsBlock}</body>
 </html>`
-    }
+  }
 
-    if (language === 'css') {
-      return `<!DOCTYPE html>
+  if (language === 'css') {
+    const companionJsBlock = companionJs ? `
+  <script>
+${companionJs}
+  </script>` : ''
+
+    return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
@@ -43,11 +111,17 @@ export function LivePreview({ content, language }: LivePreviewProps) {
     <ul><li>List item one</li><li>List item two</li></ul>
     <button>Button</button>
   </div>
+${companionJsBlock}
 </body>
 </html>`
-    }
+  }
 
-    return `<!DOCTYPE html>
+  const companionCssBlock = companionCss ? `
+  <style>
+${companionCss}
+  </style>` : ''
+
+  return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
@@ -58,6 +132,7 @@ export function LivePreview({ content, language }: LivePreviewProps) {
     .log-warn { color: #C5960C; }
     #output { white-space: pre-wrap; }
   </style>
+${companionCssBlock}
 </head>
 <body>
   <div id="output"></div>
@@ -76,7 +151,10 @@ export function LivePreview({ content, language }: LivePreviewProps) {
   </script>
 </body>
 </html>`
-  }, [content, language])
+}
+
+export function LivePreview({ content, language, companionFiles }: LivePreviewProps) {
+  const srcdoc = useMemo(() => composeDocument({ content, language, companionFiles }), [content, language, companionFiles])
 
   return (
     <div className="relative h-full w-full overflow-hidden rounded-lg border border-brand-800/50 bg-white">
