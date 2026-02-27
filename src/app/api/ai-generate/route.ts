@@ -68,7 +68,7 @@ export async function POST(request: NextRequest) {
       const errText = await response.text()
       console.error('Anthropic API error:', response.status, errText)
       return NextResponse.json(
-        { error: `AI generation failed (${response.status}). Please try again.` },
+        { error: `AI generation failed (${response.status}). ${errText}` },
         { status: 502 }
       )
     }
