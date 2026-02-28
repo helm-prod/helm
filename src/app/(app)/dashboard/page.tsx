@@ -246,8 +246,9 @@ export default async function DashboardPage() {
         )}
       </section>
 
+      {/* GA4 Analytics */}
       <div className="border-t border-brand-800 pt-8">
-        <Ga4Section profileId={user.id} allProfiles={allProfiles} />
+        <Ga4Section profileId={profile.id} allProfiles={allProfiles} />
       </div>
       </div>
     </PageGuard>
