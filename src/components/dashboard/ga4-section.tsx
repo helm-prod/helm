@@ -1,6 +1,7 @@
 'use client'
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { AiInsightCard } from '@/components/dashboard/ai-insight-card'
 import {
   aggregateCategories,
   aggregateProducers,
@@ -283,6 +284,10 @@ export function Ga4Section({ profileId, allProfiles, userRole }: Props) {
     if (!activeProducerAorData) return []
     return aggregateCategories(activeProducerAorData.current_week, activeProducerAorData.previous_week)
   }, [activeProducerAorData])
+  const sitewideCategories = useMemo(
+    () => aggregateCategories(currentRows, previousRows),
+    [currentRows, previousRows]
+  )
 
   const teamProducerCards = useMemo(() => {
     if (!teamAorData) return []
@@ -401,6 +406,27 @@ export function Ga4Section({ profileId, allProfiles, userRole }: Props) {
             ) : (
               <p className="text-sm text-brand-500">Ecommerce tracking data not yet available</p>
             )}
+
+            {currentRows.length > 0 ? (
+              <AiInsightCard
+                siteMetrics={{
+                  pageviews: pageviewsCurrent,
+                  sessions: sessionsCurrent,
+                  users: usersCurrent,
+                  conversionRate: conversionCurrent,
+                  pageviewsWow: pctChange(pageviewsCurrent, pageviewsPrevious),
+                  sessionsWow: pctChange(sessionsCurrent, sessionsPrevious),
+                  usersWow: pctChange(usersCurrent, usersPrevious),
+                }}
+                categoryData={sitewideCategories.map((category) => ({
+                  category: category.category,
+                  pageviews: category.pageviews,
+                  sessions: category.sessions,
+                  wowViews: category.wowViews,
+                }))}
+                adWeekNumber={adWeek?.week_number ?? null}
+              />
+            ) : null}
           </section>
 
           <section className="space-y-4 rounded-2xl border border-brand-800 bg-brand-900 p-5">
