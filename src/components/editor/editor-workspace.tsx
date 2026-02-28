@@ -70,8 +70,10 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
     if (error) { setSaveStatus('error') } else {
       lastSavedContentRef.current = editorContent
       setSaveStatus('saved')
-      setFiles((prev) => prev.map((f) => (f.id === activeFile.id ? { ...f, content: editorContent, updated_at: new Date().toISOString() } : f)))
-      setActiveFile((prev) => prev ? { ...prev, content: editorContent, updated_at: new Date().toISOString() } : null)
+      const nextUpdatedAt = new Date().toISOString()
+      setFiles((prev) => prev.map((f) => (f.id === activeFile.id ? { ...f, content: editorContent, updated_at: nextUpdatedAt } : f)))
+      setTeamFiles((prev) => prev.map((f) => (f.id === activeFile.id ? { ...f, content: editorContent, updated_at: nextUpdatedAt } : f)))
+      setActiveFile((prev) => prev ? { ...prev, content: editorContent, updated_at: nextUpdatedAt } : null)
     }
   }, [activeFile, editorContent, supabase])
 
@@ -88,8 +90,10 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
     }
     lastSavedContentRef.current = editorContent
     setSaveStatus('saved')
-    setFiles((prev) => prev.map((f) => (f.id === activeFile.id ? { ...f, content: editorContent, updated_at: new Date().toISOString() } : f)))
-    setActiveFile((prev) => prev ? { ...prev, content: editorContent, updated_at: new Date().toISOString() } : null)
+    const nextUpdatedAt = new Date().toISOString()
+    setFiles((prev) => prev.map((f) => (f.id === activeFile.id ? { ...f, content: editorContent, updated_at: nextUpdatedAt } : f)))
+    setTeamFiles((prev) => prev.map((f) => (f.id === activeFile.id ? { ...f, content: editorContent, updated_at: nextUpdatedAt } : f)))
+    setActiveFile((prev) => prev ? { ...prev, content: editorContent, updated_at: nextUpdatedAt } : null)
   }, [activeFile, editorContent, currentUser.id, supabase])
 
   const loadVersionHistory = useCallback(async () => {
@@ -117,6 +121,24 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
     setNewTagValue('')
   }, [activeFile, editorContent, autoSaveFile])
 
+  const findFileAcrossLists = useCallback((fileId: string): EditorFile | null => {
+    return files.find((file) => file.id === fileId)
+      ?? teamFiles.find((file) => file.id === fileId)
+      ?? (activeFile?.id === fileId ? activeFile : null)
+  }, [activeFile, files, teamFiles])
+
+  const placeInPrivateFiles = useCallback((updatedFile: EditorFile) => {
+    setFiles((prev) => [updatedFile, ...prev.filter((file) => file.id !== updatedFile.id)])
+    setTeamFiles((prev) => prev.filter((file) => file.id !== updatedFile.id))
+    setActiveFile((prev) => prev && prev.id === updatedFile.id ? updatedFile : prev)
+  }, [])
+
+  const placeInTeamFiles = useCallback((updatedFile: EditorFile) => {
+    setTeamFiles((prev) => [updatedFile, ...prev.filter((file) => file.id !== updatedFile.id)])
+    setFiles((prev) => prev.filter((file) => file.id !== updatedFile.id))
+    setActiveFile((prev) => prev && prev.id === updatedFile.id ? updatedFile : prev)
+  }, [])
+
   const createFile = useCallback(async (folderId: string | null) => {
     const { data, error } = await supabase.from('editor_files').insert({
       user_id: currentUser.id, folder_id: folderId, title: 'Untitled', language: 'html' as EditorLanguage, content: DEFAULT_CONTENT['html'], visibility: 'private' as FileVisibility,
@@ -142,12 +164,14 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
   const renameFile = useCallback(async (fileId: string, title: string) => {
     await supabase.from('editor_files').update({ title }).eq('id', fileId)
     setFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, title } : f)))
+    setTeamFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, title } : f)))
     if (activeFile?.id === fileId) setActiveFile((prev) => prev ? { ...prev, title } : null)
   }, [activeFile, supabase])
 
   const deleteFile = useCallback(async (fileId: string) => {
     await supabase.from('editor_files').delete().eq('id', fileId)
     setFiles((prev) => prev.filter((f) => f.id !== fileId))
+    setTeamFiles((prev) => prev.filter((f) => f.id !== fileId))
     if (activeFile?.id === fileId) { setActiveFile(null); setEditorContent('') }
   }, [activeFile, supabase])
 
@@ -178,33 +202,37 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
   }, [supabase])
 
   const moveFile = useCallback(async (fileId: string, folderId: string | null) => {
-    await supabase.from('editor_files').update({ folder_id: folderId, team_folder_id: null }).eq('id', fileId)
-    setFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, folder_id: folderId, team_folder_id: null } : f)))
-    setTeamFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, folder_id: folderId, team_folder_id: null } : f)))
-    setActiveFile((prev) => prev && prev.id === fileId ? { ...prev, folder_id: folderId, team_folder_id: null } : prev)
-  }, [supabase])
+    const sourceFile = findFileAcrossLists(fileId)
+    if (!sourceFile) return
+    const updatedFile: EditorFile = { ...sourceFile, folder_id: folderId, team_folder_id: null, visibility: 'private' as FileVisibility }
+    await supabase.from('editor_files').update({ folder_id: folderId, team_folder_id: null, visibility: 'private' as FileVisibility }).eq('id', fileId)
+    placeInPrivateFiles(updatedFile)
+  }, [findFileAcrossLists, placeInPrivateFiles, supabase])
 
   const moveFileToTeamFolder = useCallback(async (fileId: string, teamFolderId: string | null) => {
+    const sourceFile = findFileAcrossLists(fileId)
+    if (!sourceFile) return
+    const updatedFile: EditorFile = { ...sourceFile, team_folder_id: teamFolderId, folder_id: null, visibility: 'team' as FileVisibility }
     await supabase.from('editor_files').update({ team_folder_id: teamFolderId, folder_id: null, visibility: 'team' as FileVisibility }).eq('id', fileId)
-    setFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, team_folder_id: teamFolderId, folder_id: null, visibility: 'team' as FileVisibility } : f)))
-    setTeamFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, team_folder_id: teamFolderId, folder_id: null, visibility: 'team' as FileVisibility } : f)))
-    setActiveFile((prev) => prev && prev.id === fileId ? { ...prev, team_folder_id: teamFolderId, folder_id: null, visibility: 'team' as FileVisibility } : prev)
-  }, [supabase])
+    placeInTeamFiles(updatedFile)
+  }, [findFileAcrossLists, placeInTeamFiles, supabase])
 
   const changeLanguage = useCallback(async (lang: EditorLanguage) => {
     if (!activeFile) return
     await supabase.from('editor_files').update({ language: lang }).eq('id', activeFile.id)
     setFiles((prev) => prev.map((f) => (f.id === activeFile.id ? { ...f, language: lang } : f)))
+    setTeamFiles((prev) => prev.map((f) => (f.id === activeFile.id ? { ...f, language: lang } : f)))
     setActiveFile((prev) => prev ? { ...prev, language: lang } : null)
   }, [activeFile, supabase])
 
   const toggleVisibility = useCallback(async () => {
     if (!activeFile) return
     const newVis: FileVisibility = activeFile.visibility === 'private' ? 'team' : 'private'
-    await supabase.from('editor_files').update({ visibility: newVis }).eq('id', activeFile.id)
-    setFiles((prev) => prev.map((f) => (f.id === activeFile.id ? { ...f, visibility: newVis } : f)))
-    setActiveFile((prev) => prev ? { ...prev, visibility: newVis } : null)
-  }, [activeFile, supabase])
+    const updatedFile: EditorFile = { ...activeFile, visibility: newVis, team_folder_id: null }
+    await supabase.from('editor_files').update({ visibility: newVis, team_folder_id: null }).eq('id', activeFile.id)
+    if (newVis === 'team') placeInTeamFiles(updatedFile)
+    else placeInPrivateFiles(updatedFile)
+  }, [activeFile, placeInPrivateFiles, placeInTeamFiles, supabase])
 
   const copyToClipboard = useCallback(async () => {
     await navigator.clipboard.writeText(editorContent)
@@ -219,6 +247,7 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
     const { error } = await supabase.from('editor_files').update({ tags: cleanedTags }).eq('id', fileId)
     if (error) return
     setFiles((prev) => prev.map((file) => (file.id === fileId ? { ...file, tags: cleanedTags } : file)))
+    setTeamFiles((prev) => prev.map((file) => (file.id === fileId ? { ...file, tags: cleanedTags } : file)))
     setActiveFile((prev) => prev && prev.id === fileId ? { ...prev, tags: cleanedTags } : prev)
   }, [normalizeTag, supabase])
 
@@ -273,12 +302,28 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
     cancelTitleRename()
   }, [activeFile, cancelTitleRename, currentUser.id, renameFile, titleDraft])
 
+  const allFiles = useMemo<EditorFile[]>(() => {
+    const fileMap = new Map<string, EditorFile>()
+    ;[...files, ...teamFiles].forEach((file) => fileMap.set(file.id, file))
+    return Array.from(fileMap.values())
+  }, [files, teamFiles])
+
   const companionFiles = useMemo<PreviewCompanionFile[] | undefined>(() => {
-    if (!activeFile?.folder_id) return undefined
-    return files
-      .filter((file) => file.folder_id === activeFile.folder_id && file.id !== activeFile.id && file.language !== activeFile.language)
+    if (!activeFile) return undefined
+    if (!activeFile.folder_id && !activeFile.team_folder_id) return undefined
+
+    const relatedFiles = allFiles.filter((file) => {
+      if (file.id === activeFile.id) return false
+      if (activeFile.team_folder_id) return file.team_folder_id === activeFile.team_folder_id
+      return file.folder_id === activeFile.folder_id
+    })
+
+    const companions = relatedFiles
+      .filter((file) => file.language !== activeFile.language)
       .map((file) => ({ language: file.language, content: file.content }))
-  }, [activeFile, files])
+
+    return companions.length ? companions : undefined
+  }, [activeFile, allFiles])
 
   const downloadContent = useCallback((filename: string, fileContent: string, mimeType: string) => {
     const blob = new Blob([fileContent], { type: mimeType })

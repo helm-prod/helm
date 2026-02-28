@@ -25,6 +25,7 @@ export default async function EditorPage() {
       .from('editor_files')
       .select('*')
       .eq('user_id', user.id)
+      .eq('visibility', 'private')
       .order('updated_at', { ascending: false }),
     supabase
       .from('editor_folders')
@@ -35,7 +36,6 @@ export default async function EditorPage() {
       .from('editor_files')
       .select('*')
       .eq('visibility', 'team')
-      .neq('user_id', user.id)
       .order('updated_at', { ascending: false }),
     supabase
       .from('editor_team_folders')
