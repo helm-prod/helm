@@ -27,6 +27,7 @@ interface FileSidebarProps {
 
 type ContextMenuType = 'file' | 'folder' | 'team-file' | 'team-folder'
 type RenameType = 'file' | 'folder' | 'team-folder'
+type DropTargetType = 'personal-folder' | 'personal-unfiled' | 'team-folder' | 'team-unfiled'
 
 const LANG_ICONS: Record<EditorLanguage, { color: string; label: string }> = {
   html: { color: 'text-nex-red', label: 'HTML' },
@@ -49,6 +50,8 @@ export function FileSidebar({
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingValue, setEditingValue] = useState('')
   const [contextMenu, setContextMenu] = useState<{ id: string; type: ContextMenuType; x: number; y: number } | null>(null)
+  const [draggingFileId, setDraggingFileId] = useState<string | null>(null)
+  const [dragOverTarget, setDragOverTarget] = useState<string | null>(null)
 
   const searchQuery = search.trim().toLowerCase()
   const isSearching = Boolean(searchQuery)
@@ -135,6 +138,58 @@ export function FileSidebar({
     setContextMenu({ id, type, x: e.clientX, y: e.clientY })
   }
 
+  function getDropTargetKey(type: DropTargetType, id: string | null): string {
+    return `${type}:${id ?? 'unfiled'}`
+  }
+
+  function getDraggedFileId(e: React.DragEvent): string | null {
+    const raw = e.dataTransfer.getData('application/x-editor-file-id') || e.dataTransfer.getData('text/plain')
+    if (!raw) return null
+    return raw
+  }
+
+  function handleFileDragStart(e: React.DragEvent, fileId: string) {
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('application/x-editor-file-id', fileId)
+    e.dataTransfer.setData('text/plain', fileId)
+    setDraggingFileId(fileId)
+  }
+
+  function handleFileDragEnd() {
+    setDraggingFileId(null)
+    setDragOverTarget(null)
+  }
+
+  function handleDragOverTarget(e: React.DragEvent, targetType: DropTargetType, id: string | null) {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    setDragOverTarget(getDropTargetKey(targetType, id))
+  }
+
+  function handleDragLeaveTarget(e: React.DragEvent, targetType: DropTargetType, id: string | null) {
+    e.preventDefault()
+    const key = getDropTargetKey(targetType, id)
+    setDragOverTarget((prev) => (prev === key ? null : prev))
+  }
+
+  function handleDropToPersonalFolder(e: React.DragEvent, folderId: string | null) {
+    e.preventDefault()
+    const fileId = getDraggedFileId(e)
+    setDragOverTarget(null)
+    setDraggingFileId(null)
+    if (!fileId) return
+    onMoveFile(fileId, folderId)
+  }
+
+  function handleDropToTeamFolder(e: React.DragEvent, teamFolderId: string | null) {
+    e.preventDefault()
+    const fileId = getDraggedFileId(e)
+    setDragOverTarget(null)
+    setDraggingFileId(null)
+    if (!fileId) return
+    onMoveFileToTeamFolder(fileId, teamFolderId)
+  }
+
   function startRename(id: string, currentName: string, type: RenameType) {
     setEditingId(`${type}:${id}`)
     setEditingValue(currentName)
@@ -181,13 +236,16 @@ export function FileSidebar({
     return (
       <button
         key={file.id}
+        draggable={!isEditing}
+        onDragStart={(e) => handleFileDragStart(e, file.id)}
+        onDragEnd={handleFileDragEnd}
         onClick={() => onSelectFile(file)}
         onContextMenu={(e) => handleContextMenu(e, file.id, isTeam ? 'team-file' : 'file')}
         className={`group flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-all duration-150 ${
           isActive
             ? 'bg-brand-800/80 text-white shadow-[inset_2px_0_0_0_#C8102E]'
             : 'text-brand-200 hover:bg-brand-800/40 hover:text-white'
-        }`}
+        } ${draggingFileId === file.id ? 'opacity-50' : ''}`}
       >
         <span className={`flex-shrink-0 font-mono text-[10px] font-bold ${langInfo.color}`}>{langInfo.label}</span>
         {isEditing ? (
@@ -271,12 +329,17 @@ export function FileSidebar({
               const folderFiles = filesByFolder[folder.id] ?? []
               const isExpanded = expandedFolders.has(folder.id)
               const isFolderEditing = editingId === `folder:${folder.id}`
+              const personalFolderDropKey = getDropTargetKey('personal-folder', folder.id)
+              const isPersonalFolderDropHovered = dragOverTarget === personalFolderDropKey
               return (
                 <div key={folder.id} className="mb-1">
                   <button
                     onClick={() => toggleFolder(folder.id)}
                     onContextMenu={(e) => handleContextMenu(e, folder.id, 'folder')}
-                    className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-brand-300 transition-colors hover:bg-brand-800/30 hover:text-white"
+                    onDragOver={(e) => handleDragOverTarget(e, 'personal-folder', folder.id)}
+                    onDragLeave={(e) => handleDragLeaveTarget(e, 'personal-folder', folder.id)}
+                    onDrop={(e) => handleDropToPersonalFolder(e, folder.id)}
+                    className={`flex w-full items-center gap-1.5 rounded-md border border-transparent px-2 py-1.5 text-xs font-medium text-brand-300 transition-colors hover:bg-brand-800/30 hover:text-white ${isPersonalFolderDropHovered ? 'border-brand-500/60 bg-brand-800/60' : ''}`}
                   >
                     <ChevronIcon className={`h-3 w-3 transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''}`} />
                     <FolderIcon className="h-3.5 w-3.5 text-brand-500" />
@@ -308,24 +371,25 @@ export function FileSidebar({
               )
             })}
 
-            {(filesByFolder['unfiled']?.length ?? 0) > 0 && (
-              <div className="mb-1">
-                <button
-                  onClick={() => toggleFolder('unfiled')}
-                  className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-brand-300 transition-colors hover:bg-brand-800/30 hover:text-white"
-                >
-                  <ChevronIcon className={`h-3 w-3 transition-transform duration-150 ${expandedFolders.has('unfiled') ? 'rotate-90' : ''}`} />
-                  <FolderIcon className="h-3.5 w-3.5 text-brand-600" />
-                  <span className="flex-1 text-left">Unfiled</span>
-                  <span className="text-[10px] text-brand-600">{filesByFolder['unfiled']?.length ?? 0}</span>
-                </button>
-                {expandedFolders.has('unfiled') && (
-                  <div className="ml-3 space-y-0.5 border-l border-brand-800/40 pl-2">
-                    {filesByFolder['unfiled'].map((file) => renderFileItem(file))}
-                  </div>
-                )}
-              </div>
-            )}
+            <div className="mb-1">
+              <button
+                onClick={() => toggleFolder('unfiled')}
+                onDragOver={(e) => handleDragOverTarget(e, 'personal-unfiled', null)}
+                onDragLeave={(e) => handleDragLeaveTarget(e, 'personal-unfiled', null)}
+                onDrop={(e) => handleDropToPersonalFolder(e, null)}
+                className={`flex w-full items-center gap-1.5 rounded-md border border-transparent px-2 py-1.5 text-xs font-medium text-brand-300 transition-colors hover:bg-brand-800/30 hover:text-white ${dragOverTarget === getDropTargetKey('personal-unfiled', null) ? 'border-brand-500/60 bg-brand-800/60' : ''}`}
+              >
+                <ChevronIcon className={`h-3 w-3 transition-transform duration-150 ${expandedFolders.has('unfiled') ? 'rotate-90' : ''}`} />
+                <FolderIcon className="h-3.5 w-3.5 text-brand-600" />
+                <span className="flex-1 text-left">Unfiled</span>
+                <span className="text-[10px] text-brand-600">{filesByFolder['unfiled']?.length ?? 0}</span>
+              </button>
+              {expandedFolders.has('unfiled') && (
+                <div className="ml-3 space-y-0.5 border-l border-brand-800/40 pl-2">
+                  {filesByFolder['unfiled'].map((file) => renderFileItem(file))}
+                </div>
+              )}
+            </div>
 
             {isCreatingFolder ? (
               <div className="flex items-center gap-1.5 px-2 py-1.5">
@@ -368,7 +432,10 @@ export function FileSidebar({
         <div className="mt-4 border-t border-brand-800/50 pt-3">
           <button
             onClick={() => setShowTeamFiles(!showTeamFiles)}
-            className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-brand-300 transition-colors hover:bg-brand-800/30 hover:text-white"
+            onDragOver={(e) => handleDragOverTarget(e, 'team-unfiled', null)}
+            onDragLeave={(e) => handleDragLeaveTarget(e, 'team-unfiled', null)}
+            onDrop={(e) => handleDropToTeamFolder(e, null)}
+            className={`flex w-full items-center gap-1.5 rounded-md border border-transparent px-2 py-1.5 text-xs font-medium text-brand-300 transition-colors hover:bg-brand-800/30 hover:text-white ${dragOverTarget === getDropTargetKey('team-unfiled', null) ? 'border-brand-500/60 bg-brand-800/60' : ''}`}
           >
             <ChevronIcon className={`h-3 w-3 transition-transform duration-150 ${isTeamSectionOpen ? 'rotate-90' : ''}`} />
             <TeamIcon className="h-3.5 w-3.5 text-brand-500" />
@@ -379,7 +446,12 @@ export function FileSidebar({
           {isTeamSectionOpen && (
             <div className="ml-3 space-y-1 border-l border-brand-800/40 pl-2">
               {(teamFilesByFolder['unfiled']?.length ?? 0) > 0 && (
-                <div className="pt-1">
+                <div
+                  className={`rounded-md pt-1 ${dragOverTarget === getDropTargetKey('team-unfiled', null) ? 'bg-brand-800/40' : ''}`}
+                  onDragOver={(e) => handleDragOverTarget(e, 'team-unfiled', null)}
+                  onDragLeave={(e) => handleDragLeaveTarget(e, 'team-unfiled', null)}
+                  onDrop={(e) => handleDropToTeamFolder(e, null)}
+                >
                   <p className="px-2 pb-1 text-[10px] uppercase tracking-wider text-brand-600">Unfiled</p>
                   <div className="space-y-0.5">
                     {teamFilesByFolder['unfiled'].map((file) => renderFileItem(file, true))}
@@ -392,12 +464,17 @@ export function FileSidebar({
                 const expandKey = `team-folder:${folder.id}`
                 const isExpanded = expandedFolders.has(expandKey)
                 const isFolderEditing = editingId === `team-folder:${folder.id}`
+                const teamFolderDropKey = getDropTargetKey('team-folder', folder.id)
+                const isTeamFolderDropHovered = dragOverTarget === teamFolderDropKey
                 return (
                   <div key={folder.id} className="mb-1">
                     <button
                       onClick={() => toggleFolder(expandKey)}
                       onContextMenu={(e) => handleContextMenu(e, folder.id, 'team-folder')}
-                      className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-brand-300 transition-colors hover:bg-brand-800/30 hover:text-white"
+                      onDragOver={(e) => handleDragOverTarget(e, 'team-folder', folder.id)}
+                      onDragLeave={(e) => handleDragLeaveTarget(e, 'team-folder', folder.id)}
+                      onDrop={(e) => handleDropToTeamFolder(e, folder.id)}
+                      className={`flex w-full items-center gap-1.5 rounded-md border border-transparent px-2 py-1.5 text-xs font-medium text-brand-300 transition-colors hover:bg-brand-800/30 hover:text-white ${isTeamFolderDropHovered ? 'border-brand-500/60 bg-brand-800/60' : ''}`}
                     >
                       <ChevronIcon className={`h-3 w-3 transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''}`} />
                       <TeamIcon className="h-3.5 w-3.5 text-brand-500" />

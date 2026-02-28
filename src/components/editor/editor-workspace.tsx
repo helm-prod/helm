@@ -38,6 +38,8 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
   const [showPreview, setShowPreview] = useState(false)
   const [isDraggingSplit, setIsDraggingSplit] = useState(false)
   const [copyFeedback, setCopyFeedback] = useState(false)
+  const [isRenamingTitle, setIsRenamingTitle] = useState(false)
+  const [titleDraft, setTitleDraft] = useState('')
   const [isAddingTag, setIsAddingTag] = useState(false)
   const [newTagValue, setNewTagValue] = useState('')
   const [versionHistory, setVersionHistory] = useState<EditorFileVersion[]>([])
@@ -49,6 +51,7 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
   const isDraggingRef = useRef(false)
   const isDraggingSidebarRef = useRef(false)
   const containerRef = useRef<HTMLDivElement>(null)
+  const titleInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (!activeFile) return
@@ -108,6 +111,8 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
     lastSavedContentRef.current = file.content
     setSaveStatus('saved')
     setShowHistory(false)
+    setIsRenamingTitle(false)
+    setTitleDraft('')
     setIsAddingTag(false)
     setNewTagValue('')
   }, [activeFile, editorContent, autoSaveFile])
@@ -173,15 +178,17 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
   }, [supabase])
 
   const moveFile = useCallback(async (fileId: string, folderId: string | null) => {
-    await supabase.from('editor_files').update({ folder_id: folderId }).eq('id', fileId)
-    setFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, folder_id: folderId } : f)))
+    await supabase.from('editor_files').update({ folder_id: folderId, team_folder_id: null }).eq('id', fileId)
+    setFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, folder_id: folderId, team_folder_id: null } : f)))
+    setTeamFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, folder_id: folderId, team_folder_id: null } : f)))
+    setActiveFile((prev) => prev && prev.id === fileId ? { ...prev, folder_id: folderId, team_folder_id: null } : prev)
   }, [supabase])
 
   const moveFileToTeamFolder = useCallback(async (fileId: string, teamFolderId: string | null) => {
-    await supabase.from('editor_files').update({ team_folder_id: teamFolderId }).eq('id', fileId)
-    setFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, team_folder_id: teamFolderId } : f)))
-    setTeamFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, team_folder_id: teamFolderId } : f)))
-    setActiveFile((prev) => prev && prev.id === fileId ? { ...prev, team_folder_id: teamFolderId } : prev)
+    await supabase.from('editor_files').update({ team_folder_id: teamFolderId, folder_id: null, visibility: 'team' as FileVisibility }).eq('id', fileId)
+    setFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, team_folder_id: teamFolderId, folder_id: null, visibility: 'team' as FileVisibility } : f)))
+    setTeamFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, team_folder_id: teamFolderId, folder_id: null, visibility: 'team' as FileVisibility } : f)))
+    setActiveFile((prev) => prev && prev.id === fileId ? { ...prev, team_folder_id: teamFolderId, folder_id: null, visibility: 'team' as FileVisibility } : prev)
   }, [supabase])
 
   const changeLanguage = useCallback(async (lang: EditorLanguage) => {
@@ -239,6 +246,32 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
     const remaining = (activeFile.tags ?? []).filter((tag) => normalizeTag(tag) !== normalizeTag(tagToRemove))
     await updateFileTags(activeFile.id, remaining)
   }, [activeFile, currentUser.id, normalizeTag, updateFileTags])
+
+  const startTitleRename = useCallback(() => {
+    if (!activeFile || activeFile.user_id !== currentUser.id) return
+    setTitleDraft(activeFile.title)
+    setIsRenamingTitle(true)
+    requestAnimationFrame(() => {
+      titleInputRef.current?.focus()
+      titleInputRef.current?.select()
+    })
+  }, [activeFile, currentUser.id])
+
+  const cancelTitleRename = useCallback(() => {
+    setIsRenamingTitle(false)
+    setTitleDraft('')
+  }, [])
+
+  const commitTitleRename = useCallback(async () => {
+    if (!activeFile || activeFile.user_id !== currentUser.id) return
+    const nextTitle = titleDraft.trim()
+    if (!nextTitle || nextTitle === activeFile.title) {
+      cancelTitleRename()
+      return
+    }
+    await renameFile(activeFile.id, nextTitle)
+    cancelTitleRename()
+  }, [activeFile, cancelTitleRename, currentUser.id, renameFile, titleDraft])
 
   const companionFiles = useMemo<PreviewCompanionFile[] | undefined>(() => {
     if (!activeFile?.folder_id) return undefined
@@ -334,7 +367,27 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
                   className="rounded-md border border-brand-700 bg-brand-900 px-2 py-1 text-xs text-white outline-none focus:border-brand-500">
                   <option value="html">HTML</option><option value="css">CSS</option><option value="javascript">JavaScript</option>
                 </select>
-                <span className="text-sm font-medium text-white">{activeFile.title}</span>
+                {activeFile.user_id === currentUser.id ? (
+                  isRenamingTitle ? (
+                    <input
+                      ref={titleInputRef}
+                      value={titleDraft}
+                      onChange={(e) => setTitleDraft(e.target.value)}
+                      onBlur={commitTitleRename}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') { e.preventDefault(); void commitTitleRename() }
+                        if (e.key === 'Escape') { e.preventDefault(); cancelTitleRename() }
+                      }}
+                      className="min-w-0 border-b border-brand-500 bg-transparent text-sm font-medium text-white outline-none"
+                    />
+                  ) : (
+                    <button onClick={startTitleRename} className="truncate text-left text-sm font-medium text-white hover:text-brand-200" title="Rename file">
+                      {activeFile.title}
+                    </button>
+                  )
+                ) : (
+                  <span className="text-sm font-medium text-white">{activeFile.title}</span>
+                )}
                 <div className="flex items-center gap-1.5">
                   <div className={`h-1.5 w-1.5 rounded-full ${status.dot}`} />
                   <span className={`text-[11px] ${status.color}`}>{status.text}</span>
