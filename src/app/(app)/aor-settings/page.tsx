@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import { AorSettingsClient } from './aor-settings-client'
 import { PageGuard } from '@/components/page-guard'
+import { Ga4Mapping } from '@/components/aor-settings/ga4-mapping'
 
 export default async function AorSettingsPage() {
   const supabase = createClient()
@@ -31,10 +32,22 @@ export default async function AorSettingsPage() {
 
   return (
     <PageGuard pageSlug="aor-settings">
-      <AorSettingsClient
-        assignments={assignments ?? []}
-        producers={producers ?? []}
-      />
+      <div className="space-y-10">
+        <AorSettingsClient
+          assignments={assignments ?? []}
+          producers={producers ?? []}
+        />
+
+        <section className="rounded-2xl border border-brand-800 bg-brand-900 p-6">
+          <h2 className="text-xl font-semibold text-white">GA4 Category Mapping</h2>
+          <p className="mt-1 text-sm text-brand-400">
+            Map producer AOR categories to site URL patterns for analytics tracking
+          </p>
+          <div className="mt-5">
+            <Ga4Mapping profiles={producers ?? []} />
+          </div>
+        </section>
+      </div>
     </PageGuard>
   )
 }

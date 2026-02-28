@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { PriorityBadge } from '@/components/priority-badge'
 import { StaticStatusBadge } from '@/components/status-badge'
 import { PageGuard } from '@/components/page-guard'
+import { Ga4Section } from '@/components/dashboard/ga4-section'
 import {
   type Profile,
   REQUEST_TYPE_LABELS,
@@ -28,7 +29,7 @@ export default async function DashboardPage() {
 
   const activeStatuses = ['turn_in', 'in_production', 'proofing']
 
-  const [activeWeeksRes, currentWeekRes, recentRequestsRes] = await Promise.all([
+  const [activeWeeksRes, currentWeekRes, recentRequestsRes, allProfilesRes] = await Promise.all([
     supabase
       .from('ad_weeks')
       .select('id, week_number, year, label, status')
@@ -46,6 +47,10 @@ export default async function DashboardPage() {
       .select('*, requester:profiles!requester_id(full_name)')
       .order('created_at', { ascending: false })
       .limit(10),
+    supabase
+      .from('profiles')
+      .select('id, full_name')
+      .order('full_name'),
   ])
 
   const activeWeeks = activeWeeksRes.data ?? []
@@ -113,6 +118,7 @@ export default async function DashboardPage() {
   const recentRequests = (recentRequestsRes.data ?? []) as (WorkRequest & {
     requester: { full_name: string } | null
   })[]
+  const allProfiles = (allProfilesRes.data ?? []) as Array<{ id: string; full_name: string }>
 
   return (
     <PageGuard pageSlug="dashboard">
@@ -239,6 +245,10 @@ export default async function DashboardPage() {
           </div>
         )}
       </section>
+
+      <div className="border-t border-brand-800 pt-8">
+        <Ga4Section profileId={user.id} allProfiles={allProfiles} />
+      </div>
       </div>
     </PageGuard>
   )
