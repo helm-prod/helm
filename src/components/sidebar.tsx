@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { getEffectiveAccess, getUserRole } from '@/lib/permissions'
-import { NAV_ITEMS, ROLES } from '@/lib/nav-config'
+import { NAV_ITEMS, formatRoleName } from '@/lib/nav-config'
 import type { Profile, UserRole } from '@/lib/types/database'
 
 type IconComponent = ({ className }: { className?: string }) => JSX.Element
@@ -68,7 +68,7 @@ export function Sidebar({ profile, myQueueCount }: { profile: Profile; myQueueCo
     router.refresh()
   }
 
-  const roleLabel = ROLES.find((entry) => entry.value === role)?.label || role
+  const roleLabel = formatRoleName(role)
 
   const navItems = NAV_ITEMS.filter((item) => !(item.adminOnly && role !== 'admin'))
 
@@ -96,7 +96,8 @@ export function Sidebar({ profile, myQueueCount }: { profile: Profile; myQueueCo
             return (
               <div
                 key={item.slug}
-                className="group relative flex cursor-default items-center justify-between rounded-xl border border-transparent px-3 py-2.5 text-sm font-medium text-brand-100 opacity-40"
+                title="You don't currently have access"
+                className="flex cursor-default items-center justify-between rounded-xl border border-transparent px-3 py-2.5 text-sm font-medium text-brand-100 opacity-40"
               >
                 <span className="flex items-center gap-3">
                   <Icon className="h-5 w-5 shrink-0" />
@@ -110,9 +111,6 @@ export function Sidebar({ profile, myQueueCount }: { profile: Profile; myQueueCo
                     {myQueueCount}
                   </span>
                 )}
-                <span className="pointer-events-none absolute left-full top-1/2 z-20 ml-2 hidden -translate-y-1/2 whitespace-nowrap rounded-md border border-brand-700 bg-brand-900 px-2 py-1 text-xs text-brand-200 shadow-lg group-hover:block">
-                  You don&apos;t currently have access
-                </span>
               </div>
             )
           }

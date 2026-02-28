@@ -34,6 +34,19 @@ export const ROLES: RoleDefinition[] = [
 
 export const NON_ADMIN_ROLES = ROLES.filter((role) => role.value !== 'admin')
 
+const ROLE_NAME_MAP: Record<RoleDefinition['value'], string> = {
+  admin: 'Admin',
+  senior_web_producer: 'Senior Web Producer',
+  producer: 'Producer',
+}
+
+export function formatRoleName(role: string): string {
+  if (role in ROLE_NAME_MAP) {
+    return ROLE_NAME_MAP[role as RoleDefinition['value']]
+  }
+  return role
+}
+
 export function getNavItem(slug: string) {
   return NAV_ITEMS.find((item) => item.slug === slug)
 }

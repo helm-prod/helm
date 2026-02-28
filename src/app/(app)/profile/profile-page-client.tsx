@@ -3,18 +3,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import type { Profile, UserPreferences } from '@/lib/types/database'
+import { formatRoleName } from '@/lib/nav-config'
 
 type ThemePreference = UserPreferences['theme']
 
 type Toast = {
   tone: 'success' | 'error'
   message: string
-}
-
-function formatRoleLabel(role: Profile['role']) {
-  if (role === 'admin') return 'Admin'
-  if (role === 'senior_web_producer') return 'Senior Web Producer'
-  return 'Producer'
 }
 
 function roleBadgeClass(role: Profile['role']) {
@@ -261,7 +256,7 @@ export default function ProfilePageClient() {
                 <span
                   className={`mt-1 inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${roleBadgeClass(profile.role)}`}
                 >
-                  {formatRoleLabel(profile.role)}
+                  {formatRoleName(profile.role)}
                 </span>
               </div>
             </div>

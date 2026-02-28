@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import type { Profile } from '@/lib/types/database'
 import { PageGuard } from '@/components/page-guard'
+import { formatRoleName } from '@/lib/nav-config'
 
 export default async function SettingsPage() {
   const supabase = createClient()
@@ -56,7 +57,7 @@ export default async function SettingsPage() {
                   <td className="px-4 py-3 text-brand-400">{u.email}</td>
                   <td className="px-4 py-3">
                     <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-brand-700/50 text-brand-300 capitalize">
-                      {u.role}
+                      {formatRoleName(u.role)}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-brand-500 text-xs">

@@ -3,18 +3,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { NAV_ITEMS, NON_ADMIN_ROLES, ROLES } from '@/lib/nav-config'
+import { NAV_ITEMS, NON_ADMIN_ROLES, ROLES, formatRoleName } from '@/lib/nav-config'
 import { ensurePageAccessRows, getUserRole } from '@/lib/permissions'
 import type { PageAccess, Profile, UserPageOverride, UserRole } from '@/lib/types/database'
 
-type ActiveTab = 'permissions' | 'team' | 'overrides'
-
-type OverrideChoice = 'default' | 'grant' | 'revoke'
-
-function getRoleFallback(role: UserRole) {
-  if (role === 'senior_web_producer') return true
-  return false
-}
+type ActiveTab = 'team' | 'access'
 
 function roleBadgeClass(role: UserRole) {
   if (role === 'admin') return 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200'
@@ -22,22 +15,40 @@ function roleBadgeClass(role: UserRole) {
   return 'border-blue-500/40 bg-blue-500/15 text-blue-200'
 }
 
+function getRoleDefault(
+  pageAccessMap: Map<string, boolean>,
+  pageSlug: string,
+  role: UserRole,
+  adminOnly = false,
+) {
+  if (role === 'admin') return true
+  if (adminOnly) return false
+
+  const mapValue = pageAccessMap.get(`${pageSlug}:${role}`)
+  if (mapValue !== undefined) return mapValue
+
+  return role === 'senior_web_producer'
+}
+
+const NON_ADMIN_PAGES = NAV_ITEMS.filter((item) => !item.adminOnly)
+
 export default function AdminPageClient() {
   const router = useRouter()
   const supabase = useMemo(() => createClient(), [])
 
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState<ActiveTab>('permissions')
+  const [activeTab, setActiveTab] = useState<ActiveTab>('team')
   const [currentUserId, setCurrentUserId] = useState('')
 
-  const [pageAccessRows, setPageAccessRows] = useState<PageAccess[]>([])
   const [teamMembers, setTeamMembers] = useState<Profile[]>([])
+  const [pageAccessRows, setPageAccessRows] = useState<PageAccess[]>([])
+  const [overrideRows, setOverrideRows] = useState<UserPageOverride[]>([])
 
-  const [selectedOverrideUserId, setSelectedOverrideUserId] = useState('')
-  const [selectedOverrides, setSelectedOverrides] = useState<UserPageOverride[]>([])
+  const [roleDefaultsOpen, setRoleDefaultsOpen] = useState(false)
+  const [focusedUserId, setFocusedUserId] = useState<string | null>(null)
 
-  const [savingKey, setSavingKey] = useState<string | null>(null)
-  const [savingUserId, setSavingUserId] = useState<string | null>(null)
+  const [savingRoleUserId, setSavingRoleUserId] = useState<string | null>(null)
+  const [savingCellKey, setSavingCellKey] = useState<string | null>(null)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
 
   const showToast = useCallback((message: string) => {
@@ -45,22 +56,26 @@ export default function AdminPageClient() {
     window.setTimeout(() => setToastMessage(null), 2200)
   }, [])
 
-  const loadOverrides = useCallback(
-    async (userId: string) => {
-      if (!userId) {
-        setSelectedOverrides([])
-        return
-      }
-
-      const { data } = await supabase
-        .from('user_page_overrides')
-        .select('*')
-        .eq('user_id', userId)
-
-      setSelectedOverrides((data ?? []) as UserPageOverride[])
-    },
-    [supabase],
+  const nonAdminUsers = useMemo(
+    () => teamMembers.filter((member) => member.role !== 'admin'),
+    [teamMembers],
   )
+
+  const pageAccessMap = useMemo(() => {
+    const map = new Map<string, boolean>()
+    for (const row of pageAccessRows) {
+      map.set(`${row.page_slug}:${row.role}`, row.is_enabled)
+    }
+    return map
+  }, [pageAccessRows])
+
+  const overrideMap = useMemo(() => {
+    const map = new Map<string, UserPageOverride>()
+    for (const row of overrideRows) {
+      map.set(`${row.user_id}:${row.page_slug}`, row)
+    }
+    return map
+  }, [overrideRows])
 
   const loadAdminData = useCallback(async () => {
     const {
@@ -80,121 +95,95 @@ export default function AdminPageClient() {
       return
     }
 
-    const slugs = NAV_ITEMS.map((item) => item.slug)
-    await ensurePageAccessRows(supabase, slugs)
+    await ensurePageAccessRows(
+      supabase,
+      NAV_ITEMS.map((item) => item.slug),
+    )
 
-    const [pageAccessRes, profilesRes] = await Promise.all([
+    const [teamRes, defaultsRes, overridesRes] = await Promise.all([
+      supabase.from('profiles').select('*').order('full_name', { ascending: true }),
       supabase
         .from('page_access')
         .select('*')
         .in('role', NON_ADMIN_ROLES.map((entry) => entry.value)),
-      supabase.from('profiles').select('*').order('created_at', { ascending: true }),
+      supabase.from('user_page_overrides').select('*'),
     ])
 
-    const pageAccess = (pageAccessRes.data ?? []) as PageAccess[]
-    const team = (profilesRes.data ?? []) as Profile[]
-
-    setPageAccessRows(pageAccess)
-    setTeamMembers(team)
-
-    const firstNonAdmin = team.find((member) => member.role !== 'admin')
-    const initialUserId = firstNonAdmin?.id ?? ''
-    setSelectedOverrideUserId(initialUserId)
-    await loadOverrides(initialUserId)
-
+    setTeamMembers((teamRes.data ?? []) as Profile[])
+    setPageAccessRows((defaultsRes.data ?? []) as PageAccess[])
+    setOverrideRows((overridesRes.data ?? []) as UserPageOverride[])
     setLoading(false)
-  }, [loadOverrides, router, supabase])
+  }, [router, supabase])
 
   useEffect(() => {
     void loadAdminData()
   }, [loadAdminData])
 
   useEffect(() => {
-    void loadOverrides(selectedOverrideUserId)
-  }, [loadOverrides, selectedOverrideUserId])
-
-  const nonAdminMembers = useMemo(
-    () => teamMembers.filter((member) => member.role !== 'admin'),
-    [teamMembers],
-  )
-
-  const pageAccessMap = useMemo(() => {
-    const map = new Map<string, boolean>()
-    for (const row of pageAccessRows) {
-      map.set(`${row.page_slug}:${row.role}`, row.is_enabled)
+    if (!focusedUserId) return
+    if (!nonAdminUsers.some((user) => user.id === focusedUserId)) {
+      setFocusedUserId(null)
     }
-    return map
-  }, [pageAccessRows])
+  }, [focusedUserId, nonAdminUsers])
 
-  const selectedUser = useMemo(
-    () => nonAdminMembers.find((member) => member.id === selectedOverrideUserId) ?? null,
-    [nonAdminMembers, selectedOverrideUserId],
-  )
+  async function updateTeamRole(userId: string, nextRole: UserRole) {
+    const member = teamMembers.find((item) => item.id === userId)
+    if (!member) return
 
-  const selectedOverrideMap = useMemo(() => {
-    const map = new Map<string, UserPageOverride>()
-    for (const row of selectedOverrides) {
-      map.set(row.page_slug, row)
-    }
-    return map
-  }, [selectedOverrides])
+    const confirmed = window.confirm(
+      `Change ${member.full_name || member.email} to ${formatRoleName(nextRole)}?`,
+    )
+    if (!confirmed) return
 
-  const roleDefaults = useMemo(() => {
-    if (!selectedUser) return new Map<string, boolean>()
+    setSavingRoleUserId(userId)
 
-    const map = new Map<string, boolean>()
-    for (const item of NAV_ITEMS) {
-      if (item.adminOnly) {
-        map.set(item.slug, false)
-        continue
-      }
+    const { error } = await supabase.from('profiles').update({ role: nextRole }).eq('id', userId)
 
-      const key = `${item.slug}:${selectedUser.role}`
-      if (pageAccessMap.has(key)) {
-        map.set(item.slug, Boolean(pageAccessMap.get(key)))
-      } else {
-        map.set(item.slug, getRoleFallback(selectedUser.role))
-      }
+    if (!error) {
+      setTeamMembers((prev) =>
+        prev.map((item) => (item.id === userId ? { ...item, role: nextRole } : item)),
+      )
+      showToast('Role updated')
     }
 
-    return map
-  }, [pageAccessMap, selectedUser])
+    setSavingRoleUserId(null)
+  }
 
-  const summary = useMemo(() => {
-    if (!selectedUser) return { roleCount: 0, effectiveCount: 0, overrideDelta: 0 }
+  async function resetUserOverrides(userId: string) {
+    const member = teamMembers.find((item) => item.id === userId)
+    if (!member) return
 
-    let roleCount = 0
-    let effectiveCount = 0
+    const confirmed = window.confirm(`Reset all overrides for ${member.full_name || member.email}?`)
+    if (!confirmed) return
 
-    for (const item of NAV_ITEMS) {
-      if (item.adminOnly) continue
+    setSavingCellKey(`reset:${userId}`)
 
-      const defaultEnabled = roleDefaults.get(item.slug) ?? false
-      if (defaultEnabled) roleCount += 1
+    const { error } = await supabase.from('user_page_overrides').delete().eq('user_id', userId)
 
-      const override = selectedOverrideMap.get(item.slug)
-      const finalEnabled = override ? override.is_enabled : defaultEnabled
-      if (finalEnabled) effectiveCount += 1
+    if (!error) {
+      setOverrideRows((prev) => prev.filter((row) => row.user_id !== userId))
+      showToast('User access reset to defaults')
     }
 
-    return {
-      roleCount,
-      effectiveCount,
-      overrideDelta: effectiveCount - roleCount,
-    }
-  }, [roleDefaults, selectedOverrideMap, selectedUser])
+    setSavingCellKey(null)
+  }
 
-  async function toggleRoleDefault(slug: string, role: UserRole, isEnabled: boolean) {
+  async function saveRoleDefault(pageSlug: string, role: UserRole, nextEnabled: boolean) {
     if (role === 'admin') return
-    setSavingKey(`${slug}:${role}`)
+
+    const navItem = NAV_ITEMS.find((item) => item.slug === pageSlug)
+    if (!navItem || navItem.adminOnly) return
+
+    const key = `default:${pageSlug}:${role}`
+    setSavingCellKey(key)
 
     const { error } = await supabase
       .from('page_access')
       .upsert(
         {
-          page_slug: slug,
+          page_slug: pageSlug,
           role,
-          is_enabled: isEnabled,
+          is_enabled: nextEnabled,
           updated_at: new Date().toISOString(),
         },
         { onConflict: 'page_slug,role' },
@@ -202,15 +191,15 @@ export default function AdminPageClient() {
 
     if (!error) {
       setPageAccessRows((prev) => {
-        const index = prev.findIndex((row) => row.page_slug === slug && row.role === role)
+        const index = prev.findIndex((row) => row.page_slug === pageSlug && row.role === role)
         if (index === -1) {
           return [
             ...prev,
             {
-              id: `new-${slug}-${role}`,
-              page_slug: slug,
+              id: `new-${pageSlug}-${role}`,
+              page_slug: pageSlug,
               role,
-              is_enabled: isEnabled,
+              is_enabled: nextEnabled,
               created_at: new Date().toISOString(),
               updated_at: new Date().toISOString(),
             },
@@ -219,56 +208,27 @@ export default function AdminPageClient() {
 
         return prev.map((row, rowIndex) =>
           rowIndex === index
-            ? { ...row, is_enabled: isEnabled, updated_at: new Date().toISOString() }
+            ? { ...row, is_enabled: nextEnabled, updated_at: new Date().toISOString() }
             : row,
         )
       })
       showToast('Role default saved')
     }
 
-    setSavingKey(null)
+    setSavingCellKey(null)
   }
 
-  async function updateTeamRole(userId: string, nextRole: UserRole) {
-    const member = teamMembers.find((teamMember) => teamMember.id === userId)
-    if (!member) return
+  async function saveUserAccess(user: Profile, pageSlug: string, nextEnabled: boolean) {
+    const navItem = NAV_ITEMS.find((item) => item.slug === pageSlug)
+    if (!navItem || navItem.adminOnly) return
 
-    const confirmed = window.confirm(`Change ${member.full_name || member.email} to ${nextRole}?`)
-    if (!confirmed) return
+    const key = `user:${user.id}:${pageSlug}`
+    setSavingCellKey(key)
 
-    setSavingUserId(userId)
+    const roleDefault = getRoleDefault(pageAccessMap, pageSlug, user.role, false)
+    const existing = overrideMap.get(`${user.id}:${pageSlug}`)
 
-    const { error } = await supabase.from('profiles').update({ role: nextRole }).eq('id', userId)
-
-    if (!error) {
-      setTeamMembers((prev) =>
-        prev.map((teamMember) =>
-          teamMember.id === userId ? { ...teamMember, role: nextRole } : teamMember,
-        ),
-      )
-
-      if (selectedOverrideUserId === userId && nextRole === 'admin') {
-        const fallback = teamMembers.find(
-          (teamMember) => teamMember.id !== userId && teamMember.role !== 'admin',
-        )
-        setSelectedOverrideUserId(fallback?.id ?? '')
-      }
-
-      showToast('Role updated')
-    }
-
-    setSavingUserId(null)
-  }
-
-  async function updateOverride(pageSlug: string, choice: OverrideChoice) {
-    if (!selectedUser) return
-
-    const key = `${selectedUser.id}:${pageSlug}`
-    setSavingKey(key)
-
-    const existing = selectedOverrideMap.get(pageSlug)
-
-    if (choice === 'default') {
+    if (nextEnabled === roleDefault) {
       if (existing) {
         const { error } = await supabase
           .from('user_page_overrides')
@@ -276,23 +236,22 @@ export default function AdminPageClient() {
           .eq('id', existing.id)
 
         if (!error) {
-          setSelectedOverrides((prev) => prev.filter((row) => row.id !== existing.id))
-          showToast('Override cleared')
+          setOverrideRows((prev) => prev.filter((row) => row.id !== existing.id))
+          showToast('Access reset to role default')
         }
       }
-      setSavingKey(null)
+
+      setSavingCellKey(null)
       return
     }
-
-    const isEnabled = choice === 'grant'
 
     const { data, error } = await supabase
       .from('user_page_overrides')
       .upsert(
         {
-          user_id: selectedUser.id,
+          user_id: user.id,
           page_slug: pageSlug,
-          is_enabled: isEnabled,
+          is_enabled: nextEnabled,
           updated_at: new Date().toISOString(),
         },
         { onConflict: 'user_id,page_slug' },
@@ -302,15 +261,17 @@ export default function AdminPageClient() {
 
     if (!error && data) {
       const row = data as UserPageOverride
-      setSelectedOverrides((prev) => {
-        const index = prev.findIndex((item) => item.page_slug === pageSlug)
+      setOverrideRows((prev) => {
+        const index = prev.findIndex(
+          (item) => item.user_id === user.id && item.page_slug === pageSlug,
+        )
         if (index === -1) return [...prev, row]
         return prev.map((item, itemIndex) => (itemIndex === index ? row : item))
       })
-      showToast('Override saved')
+      showToast('Access updated')
     }
 
-    setSavingKey(null)
+    setSavingCellKey(null)
   }
 
   const tabClass = (tab: ActiveTab) =>
@@ -329,7 +290,7 @@ export default function AdminPageClient() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div className="mx-auto max-w-7xl space-y-6">
       {toastMessage && (
         <div className="fixed right-6 top-6 z-50 rounded-lg border border-emerald-500/30 bg-emerald-500/15 px-3 py-2 text-sm text-emerald-200 shadow-lg">
           {toastMessage}
@@ -338,78 +299,17 @@ export default function AdminPageClient() {
 
       <div>
         <h1 className="text-2xl font-bold text-white">Admin</h1>
-        <p className="mt-1 text-brand-400">Configure role defaults, team roles, and per-user overrides.</p>
+        <p className="mt-1 text-brand-400">Manage team roles and page access.</p>
       </div>
 
       <div className="inline-flex rounded-xl border border-brand-800 bg-brand-900 p-1">
-        <button type="button" onClick={() => setActiveTab('permissions')} className={tabClass('permissions')}>
-          Page Permissions
-        </button>
         <button type="button" onClick={() => setActiveTab('team')} className={tabClass('team')}>
           Team Members
         </button>
-        <button type="button" onClick={() => setActiveTab('overrides')} className={tabClass('overrides')}>
-          User Overrides
+        <button type="button" onClick={() => setActiveTab('access')} className={tabClass('access')}>
+          Access Control
         </button>
       </div>
-
-      {activeTab === 'permissions' && (
-        <section className="rounded-2xl border border-brand-800 bg-brand-900">
-          <div className="border-b border-brand-800 px-6 py-4">
-            <h2 className="text-lg font-semibold text-white">Page Permissions</h2>
-            <p className="mt-1 text-sm text-brand-400">
-              Admins always have full access. Configure default access for other roles below.
-            </p>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-brand-800 text-brand-400">
-                  <th className="px-4 py-3 text-left font-medium">Page Name</th>
-                  {NON_ADMIN_ROLES.map((role) => (
-                    <th key={role.value} className="px-4 py-3 text-left font-medium">
-                      {role.label}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-brand-800/50">
-                {NAV_ITEMS.map((item) => (
-                  <tr key={item.slug} className="hover:bg-brand-800/30">
-                    <td className="px-4 py-3 text-white">{item.label}</td>
-                    {NON_ADMIN_ROLES.map((role) => {
-                      const accessKey = `${item.slug}:${role.value}`
-                      const isSaving = savingKey === accessKey
-                      const defaultEnabled = pageAccessMap.get(accessKey) ?? getRoleFallback(role.value)
-
-                      return (
-                        <td key={role.value} className="px-4 py-3">
-                          <button
-                            type="button"
-                            disabled={isSaving}
-                            onClick={() => void toggleRoleDefault(item.slug, role.value, !defaultEnabled)}
-                            className={`inline-flex h-6 w-11 items-center rounded-full px-1 transition-colors ${
-                              defaultEnabled ? 'bg-emerald-500/40' : 'bg-brand-700'
-                            } ${isSaving ? 'cursor-not-allowed opacity-70' : ''}`}
-                            aria-label={`Toggle ${role.label} default for ${item.label}`}
-                          >
-                            <span
-                              className={`h-4 w-4 rounded-full bg-white transition-transform ${
-                                defaultEnabled ? 'translate-x-5' : 'translate-x-0'
-                              }`}
-                            />
-                          </button>
-                        </td>
-                      )
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      )}
 
       {activeTab === 'team' && (
         <section className="rounded-2xl border border-brand-800 bg-brand-900">
@@ -429,18 +329,18 @@ export default function AdminPageClient() {
               <tbody className="divide-y divide-brand-800/50">
                 {teamMembers.map((member) => {
                   const isSelf = member.id === currentUserId
-                  const isSaving = savingUserId === member.id
+                  const isSaving = savingRoleUserId === member.id
 
                   return (
                     <tr key={member.id} className="hover:bg-brand-800/30">
                       <td className="px-4 py-3 text-white">{member.full_name}</td>
                       <td className="px-4 py-3 text-brand-300">{member.email}</td>
                       <td className="px-4 py-3">
-                        <div className="flex items-center gap-3">
+                        <div className="flex flex-wrap items-center gap-3">
                           <span
                             className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${roleBadgeClass(member.role)}`}
                           >
-                            {ROLES.find((role) => role.value === member.role)?.label || member.role}
+                            {formatRoleName(member.role)}
                           </span>
                           <select
                             value={member.role}
@@ -450,7 +350,7 @@ export default function AdminPageClient() {
                           >
                             {ROLES.map((role) => (
                               <option key={role.value} value={role.value}>
-                                {role.label}
+                                {formatRoleName(role.value)}
                               </option>
                             ))}
                           </select>
@@ -458,12 +358,12 @@ export default function AdminPageClient() {
                             <button
                               type="button"
                               onClick={() => {
-                                setSelectedOverrideUserId(member.id)
-                                setActiveTab('overrides')
+                                setFocusedUserId(member.id)
+                                setActiveTab('access')
                               }}
                               className="rounded-md border border-brand-700 px-2 py-1 text-xs text-brand-300 hover:border-brand-600 hover:text-white"
                             >
-                              Manage Overrides
+                              Manage Access
                             </button>
                           )}
                           {isSelf && <span className="text-xs text-brand-500">You</span>}
@@ -478,103 +378,190 @@ export default function AdminPageClient() {
         </section>
       )}
 
-      {activeTab === 'overrides' && (
+      {activeTab === 'access' && (
         <section className="rounded-2xl border border-brand-800 bg-brand-900">
-          <div className="border-b border-brand-800 px-6 py-4">
-            <h2 className="text-lg font-semibold text-white">User Overrides</h2>
-            <p className="mt-1 text-sm text-brand-400">Grant or revoke access per user. Overrides always win over role defaults.</p>
+          <div className="flex items-center justify-between gap-3 border-b border-brand-800 px-6 py-4">
+            <div>
+              <h2 className="text-lg font-semibold text-white">Access Control</h2>
+              <p className="mt-1 text-sm text-brand-400">
+                Admins always have full access. Manage access for team members below.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setRoleDefaultsOpen(true)}
+              className="rounded-lg border border-brand-700 px-3 py-2 text-sm text-brand-200 transition-colors hover:border-brand-600 hover:text-white"
+            >
+              Edit Role Defaults
+            </button>
           </div>
 
-          <div className="space-y-4 px-6 py-4">
-            <div className="max-w-sm">
-              <label className="mb-1 block text-xs uppercase tracking-wide text-brand-500">Team Member</label>
-              <select
-                value={selectedOverrideUserId}
-                onChange={(event) => setSelectedOverrideUserId(event.target.value)}
-                className="w-full rounded-xl border border-brand-700 bg-brand-900/70 px-3 py-2 text-sm text-white"
-              >
-                {nonAdminMembers.length === 0 && <option value="">No non-admin users</option>}
-                {nonAdminMembers.map((member) => (
-                  <option key={member.id} value={member.id}>
-                    {member.full_name} ({member.email})
-                  </option>
-                ))}
-              </select>
-            </div>
+          {nonAdminUsers.length === 0 ? (
+            <div className="px-6 py-10 text-sm text-brand-400">No non-admin team members found.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-[900px] w-full text-sm">
+                <thead>
+                  <tr className="border-b border-brand-800 text-brand-400">
+                    <th className="sticky left-0 z-30 min-w-[220px] bg-brand-900 px-4 py-3 text-left font-medium">
+                      Page
+                    </th>
+                    {nonAdminUsers.map((user) => {
+                      const columnFocused = focusedUserId === user.id
 
-            {selectedUser ? (
-              <>
-                <div className="rounded-xl border border-brand-800 bg-brand-900/50 px-4 py-3 text-sm text-brand-300">
-                  <p>
-                    Role: <span className="text-white">{ROLES.find((role) => role.value === selectedUser.role)?.label || selectedUser.role}</span>
-                  </p>
-                  <p className="mt-1">
-                    {summary.effectiveCount} pages accessible ({summary.roleCount} from role, {summary.overrideDelta} from overrides)
-                  </p>
-                </div>
-
-                <div className="overflow-x-auto rounded-xl border border-brand-800">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-brand-800 text-brand-400">
-                        <th className="px-4 py-3 text-left font-medium">Page Name</th>
-                        <th className="px-4 py-3 text-left font-medium">Role Default</th>
-                        <th className="px-4 py-3 text-left font-medium">Override</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-brand-800/50">
-                      {NAV_ITEMS.map((item) => {
-                        const defaultEnabled = roleDefaults.get(item.slug) ?? false
-                        const override = selectedOverrideMap.get(item.slug)
-                        const controlValue: OverrideChoice =
-                          override === undefined ? 'default' : override.is_enabled ? 'grant' : 'revoke'
-                        const isAdminOnly = Boolean(item.adminOnly)
-                        const rowSavingKey = `${selectedUser.id}:${item.slug}`
-                        const isSaving = savingKey === rowSavingKey
+                      return (
+                        <th
+                          key={user.id}
+                          className={`min-w-[220px] px-4 py-3 text-left font-medium ${
+                            columnFocused ? 'bg-brand-800/40' : ''
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <p className="text-white text-sm font-semibold">{user.full_name}</p>
+                              <span className={`mt-1 inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${roleBadgeClass(user.role)}`}>
+                                {formatRoleName(user.role)}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => void resetUserOverrides(user.id)}
+                              disabled={savingCellKey === `reset:${user.id}`}
+                              className="rounded-md border border-brand-700 px-2 py-1 text-xs text-brand-300 hover:border-brand-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              Reset to defaults
+                            </button>
+                          </div>
+                        </th>
+                      )
+                    })}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-brand-800/50">
+                  {NON_ADMIN_PAGES.map((page) => (
+                    <tr key={page.slug} className="hover:bg-brand-800/20">
+                      <td className="sticky left-0 z-20 bg-brand-900 px-4 py-3 text-white">{page.label}</td>
+                      {nonAdminUsers.map((user) => {
+                        const roleDefault = getRoleDefault(pageAccessMap, page.slug, user.role)
+                        const override = overrideMap.get(`${user.id}:${page.slug}`)
+                        const effective = override ? override.is_enabled : roleDefault
+                        const hasOverride = Boolean(override && override.is_enabled !== roleDefault)
+                        const cellKey = `user:${user.id}:${page.slug}`
+                        const isSaving = savingCellKey === cellKey
 
                         return (
-                          <tr key={item.slug} className="hover:bg-brand-800/30">
-                            <td className="px-4 py-3 text-white">{item.label}</td>
-                            <td className="px-4 py-3">
-                              <span
-                                className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${
-                                  defaultEnabled
-                                    ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200'
-                                    : 'border-slate-500/40 bg-slate-500/15 text-slate-300'
-                                }`}
+                          <td key={user.id} className={`px-4 py-3 ${focusedUserId === user.id ? 'bg-brand-800/20' : ''}`}>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                disabled={isSaving}
+                                onClick={() => void saveUserAccess(user, page.slug, !effective)}
+                                className={`relative inline-flex h-6 w-11 items-center rounded-full px-1 transition-colors ${
+                                  effective ? 'bg-emerald-500/40' : 'bg-brand-700'
+                                } ${isSaving ? 'cursor-not-allowed opacity-70' : ''}`}
+                                aria-label={`Set ${page.label} access for ${user.full_name}`}
                               >
-                                {defaultEnabled ? 'Enabled' : 'Disabled'}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3">
-                              <select
-                                value={controlValue}
-                                disabled={isSaving || isAdminOnly}
-                                onChange={(event) => void updateOverride(item.slug, event.target.value as OverrideChoice)}
-                                className="rounded-lg border border-brand-700 bg-brand-900/70 px-2 py-1 text-xs text-white disabled:cursor-not-allowed disabled:opacity-60"
-                              >
-                                <option value="default">Use Default</option>
-                                <option value="grant">Grant Access</option>
-                                <option value="revoke">Revoke Access</option>
-                              </select>
-                              {isAdminOnly && (
-                                <span className="ml-2 text-xs text-brand-500">Admins only</span>
+                                <span
+                                  className={`h-4 w-4 rounded-full bg-white transition-transform ${
+                                    effective ? 'translate-x-5' : 'translate-x-0'
+                                  }`}
+                                />
+                              </button>
+                              {hasOverride && (
+                                <span
+                                  className="inline-block h-2 w-2 rounded-full bg-amber-300"
+                                  title={`Overridden from role default (${roleDefault ? 'Enabled' : 'Disabled'})`}
+                                />
                               )}
-                            </td>
-                          </tr>
+                            </div>
+                          </td>
                         )
                       })}
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            ) : (
-              <div className="rounded-xl border border-brand-800 bg-brand-900/50 px-4 py-3 text-sm text-brand-400">
-                No non-admin users available for overrides.
-              </div>
-            )}
-          </div>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </section>
+      )}
+
+      {roleDefaultsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-5xl rounded-2xl border border-brand-700 bg-brand-900 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-brand-800 px-6 py-4">
+              <div>
+                <h3 className="text-lg font-semibold text-white">Role Defaults</h3>
+                <p className="mt-1 text-sm text-brand-400">
+                  Changes here affect all users of that role unless they have a personal override.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRoleDefaultsOpen(false)}
+                className="rounded-md px-2 py-1 text-brand-300 hover:bg-brand-800 hover:text-white"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="max-h-[70vh] overflow-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-brand-800 text-brand-400">
+                    <th className="sticky left-0 z-20 bg-brand-900 px-4 py-3 text-left font-medium">Page</th>
+                    {NON_ADMIN_ROLES.map((role) => (
+                      <th key={role.value} className="px-4 py-3 text-left font-medium">
+                        {formatRoleName(role.value)}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-brand-800/50">
+                  {NAV_ITEMS.map((page) => (
+                    <tr key={page.slug} className="hover:bg-brand-800/20">
+                      <td className="sticky left-0 z-10 bg-brand-900 px-4 py-3 text-white">
+                        <div className="flex items-center gap-2">
+                          <span>{page.label}</span>
+                          {page.adminOnly && (
+                            <span className="rounded-full border border-brand-700 px-2 py-0.5 text-[11px] text-brand-400">
+                              Admin only
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      {NON_ADMIN_ROLES.map((role) => {
+                        const defaultEnabled = getRoleDefault(pageAccessMap, page.slug, role.value, Boolean(page.adminOnly))
+                        const key = `default:${page.slug}:${role.value}`
+                        const isSaving = savingCellKey === key
+
+                        return (
+                          <td key={role.value} className="px-4 py-3">
+                            <button
+                              type="button"
+                              disabled={Boolean(page.adminOnly) || isSaving}
+                              onClick={() => void saveRoleDefault(page.slug, role.value, !defaultEnabled)}
+                              className={`inline-flex h-6 w-11 items-center rounded-full px-1 transition-colors ${
+                                defaultEnabled ? 'bg-emerald-500/40' : 'bg-brand-700'
+                              } ${(Boolean(page.adminOnly) || isSaving) ? 'cursor-not-allowed opacity-60' : ''}`}
+                              aria-label={`Set ${formatRoleName(role.value)} default for ${page.label}`}
+                            >
+                              <span
+                                className={`h-4 w-4 rounded-full bg-white transition-transform ${
+                                  defaultEnabled ? 'translate-x-5' : 'translate-x-0'
+                                }`}
+                              />
+                            </button>
+                          </td>
+                        )
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
