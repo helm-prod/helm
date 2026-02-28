@@ -1,6 +1,8 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import { PageGuard } from '@/components/page-guard'
+import { PerformanceDashboard } from '@/components/analytics/performance-dashboard'
+import type { Profile } from '@/lib/types/database'
 
 export default async function SitePerformancePage() {
   const supabase = createClient()
@@ -16,16 +18,20 @@ export default async function SitePerformancePage() {
     .single()
 
   if (!profile) redirect('/login')
+  const p = profile as Profile
+
+  const { data: allProfiles } = await supabase
+    .from('profiles')
+    .select('id, full_name')
+    .in('role', ['admin', 'senior_web_producer', 'producer'])
+    .order('full_name')
 
   return (
     <PageGuard pageSlug="analytics-performance">
-      <div className="max-w-4xl">
+      <div className="max-w-6xl">
         <h1 className="mb-2 text-2xl font-bold text-white">Site Performance</h1>
         <p className="mb-8 text-brand-400">GA4 analytics deep-dive by category and producer</p>
-
-        <div className="rounded-xl border border-brand-800 bg-brand-900 p-6 text-brand-300">
-          Site Performance dashboard coming soon - this page will show detailed GA4 analytics broken down by producer AOR.
-        </div>
+        <PerformanceDashboard profileId={p.id} allProfiles={allProfiles ?? []} userRole={p.role} />
       </div>
     </PageGuard>
   )

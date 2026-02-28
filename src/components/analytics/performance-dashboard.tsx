@@ -14,12 +14,11 @@ import {
   formatInteger,
   formatPercent,
   formatRelativeTime,
-  hasEcommerceData,
   pctChange,
   pointsDelta,
+  sumMetric,
   toNumber,
   truncatePath,
-  sumMetric,
 } from '@/lib/ga4-utils'
 import type {
   DeltaBadge,
@@ -31,6 +30,33 @@ interface Props {
   profileId: string
   allProfiles: ProfileOption[]
   userRole?: string | null
+}
+
+type SortKey =
+  | 'category'
+  | 'pageviews'
+  | 'sessions'
+  | 'users'
+  | 'addToCartRate'
+  | 'bounceRate'
+  | 'conversionRate'
+  | 'revenue'
+  | 'wowViews'
+
+type SortDirection = 'asc' | 'desc'
+
+interface CategoryTableRow {
+  category: string
+  pageviews: number
+  sessions: number
+  users: number
+  revenue: number
+  wowViews: number | null
+  pages: MetricsResponse['current_week']
+  addToCarts: number
+  addToCartRate: number | null
+  bounceRate: number | null
+  conversionRate: number | null
 }
 
 function StatsCard({
@@ -51,24 +77,6 @@ function StatsCard({
   )
 }
 
-function SecondaryCard({
-  label,
-  value,
-  delta,
-}: {
-  label: string
-  value: string
-  delta: DeltaBadge
-}) {
-  return (
-    <div className="rounded-2xl border border-[#1a3a4a] bg-brand-900/80 p-4">
-      <p className="text-xs uppercase tracking-wide text-brand-400">{label}</p>
-      <p className="mt-2 text-2xl font-semibold text-white">{value}</p>
-      <p className={`mt-2 text-sm font-medium ${delta.className}`}>{delta.text}</p>
-    </div>
-  )
-}
-
 function LoadingSkeleton() {
   return (
     <section className="animate-pulse space-y-4 rounded-2xl border border-brand-800 bg-brand-900/40 p-5">
@@ -83,7 +91,33 @@ function LoadingSkeleton() {
   )
 }
 
-export function Ga4Section({ profileId, allProfiles, userRole }: Props) {
+function compareNullableNumber(a: number | null, b: number | null) {
+  if (a === null && b === null) return 0
+  if (a === null) return 1
+  if (b === null) return -1
+  return a - b
+}
+
+function atcRateTone(rate: number | null) {
+  if (rate === null) return 'text-brand-500'
+  if (rate > 5) return 'text-emerald-400'
+  if (rate > 2) return 'text-amber-400'
+  return 'text-red-400'
+}
+
+function bounceRateTone(rate: number | null) {
+  if (rate === null) return 'text-brand-500'
+  if (rate < 40) return 'text-emerald-400'
+  if (rate < 60) return 'text-amber-400'
+  return 'text-red-400'
+}
+
+function sortIndicator(sortKey: SortKey, activeKey: SortKey, direction: SortDirection) {
+  if (sortKey !== activeKey) return ''
+  return direction === 'asc' ? ' ▲' : ' ▼'
+}
+
+export function PerformanceDashboard({ profileId, allProfiles, userRole }: Props) {
   const isAdmin = userRole === 'admin'
   const [siteData, setSiteData] = useState<MetricsResponse | null>(null)
   const [aorDataByProfile, setAorDataByProfile] = useState<Record<string, MetricsResponse>>({})
@@ -98,6 +132,8 @@ export function Ga4Section({ profileId, allProfiles, userRole }: Props) {
   const [refreshing, setRefreshing] = useState(false)
   const [cooldownUntil, setCooldownUntil] = useState(0)
   const [nowMs, setNowMs] = useState(Date.now())
+  const [sortKey, setSortKey] = useState<SortKey>('pageviews')
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 1000)
@@ -147,7 +183,7 @@ export function Ga4Section({ profileId, allProfiles, userRole }: Props) {
         setAorLoading(false)
       }
     },
-    [fetchMetrics, aorDataByProfile]
+    [aorDataByProfile, fetchMetrics]
   )
 
   const loadTeamAorData = useCallback(
@@ -170,7 +206,7 @@ export function Ga4Section({ profileId, allProfiles, userRole }: Props) {
   )
 
   useEffect(() => {
-    loadSiteData()
+    void loadSiteData()
   }, [loadSiteData])
 
   useEffect(() => {
@@ -179,8 +215,8 @@ export function Ga4Section({ profileId, allProfiles, userRole }: Props) {
       return
     }
 
-    const isSelectedInList = allProfiles.some((profile) => profile.id === selectedAorProfileId)
-    if (!isSelectedInList) {
+    const selectedExists = allProfiles.some((profile) => profile.id === selectedAorProfileId)
+    if (!selectedExists) {
       setSelectedAorProfileId(allProfiles[0]?.id ?? profileId)
     }
   }, [allProfiles, isAdmin, profileId, selectedAorProfileId])
@@ -188,14 +224,14 @@ export function Ga4Section({ profileId, allProfiles, userRole }: Props) {
   useEffect(() => {
     if (aorView === 'team') {
       if (isAdmin) {
-        loadTeamAorData()
+        void loadTeamAorData()
       }
       return
     }
 
     const targetProfileId = isAdmin ? selectedAorProfileId : profileId
     if (targetProfileId) {
-      loadProfileAorData(targetProfileId)
+      void loadProfileAorData(targetProfileId)
     }
   }, [aorView, isAdmin, loadProfileAorData, loadTeamAorData, profileId, selectedAorProfileId])
 
@@ -227,95 +263,150 @@ export function Ga4Section({ profileId, allProfiles, userRole }: Props) {
       setRefreshing(false)
     }
   }, [
-    refreshing,
-    nowMs,
+    aorView,
     cooldownUntil,
     isAdmin,
-    selectedAorProfileId,
-    profileId,
-    loadSiteData,
-    aorView,
     loadProfileAorData,
-    teamAorData,
+    loadSiteData,
     loadTeamAorData,
+    nowMs,
+    profileId,
+    refreshing,
+    selectedAorProfileId,
+    teamAorData,
   ])
-
-  const currentRows = siteData?.current_week ?? []
-  const previousRows = siteData?.previous_week ?? []
-
-  const pageviewsCurrent = sumMetric(currentRows, 'screenpage_views')
-  const pageviewsPrevious = sumMetric(previousRows, 'screenpage_views')
-
-  const sessionsCurrent = sumMetric(currentRows, 'sessions')
-  const sessionsPrevious = sumMetric(previousRows, 'sessions')
-
-  const usersCurrent = sumMetric(currentRows, 'active_users')
-  const usersPrevious = sumMetric(previousRows, 'active_users')
-
-  const conversionCurrent = calculateConversionRate(currentRows)
-  const conversionPrevious = calculateConversionRate(previousRows)
-
-  const revenueCurrent = calculateRevenue(currentRows)
-  const revenuePrevious = calculateRevenue(previousRows)
-
-  const transactionsCurrent = sumMetric(currentRows, 'ecommerce_purchases')
-  const transactionsPrevious = sumMetric(previousRows, 'ecommerce_purchases')
-
-  const addToCartsCurrent = sumMetric(currentRows, 'add_to_carts')
-  const addToCartsPrevious = sumMetric(previousRows, 'add_to_carts')
-
-  const bounceCurrent = averageMetric(currentRows, 'bounce_rate')
-  const bouncePrevious = averageMetric(previousRows, 'bounce_rate')
-
-  const ecommerceVisible = hasEcommerceData([...currentRows, ...previousRows])
-
-  const highlights = useMemo(
-    () => buildPageHighlights(currentRows, previousRows),
-    [currentRows, previousRows]
-  )
 
   const activeProducerProfileId = isAdmin ? selectedAorProfileId : profileId
   const activeProducerAorData = activeProducerProfileId
     ? (aorDataByProfile[activeProducerProfileId] ?? null)
     : null
 
-  const myAorCategories = useMemo(() => {
+  const activeKpiData = aorView === 'producer' ? activeProducerAorData : siteData
+  const kpiCurrentRows = activeKpiData?.current_week ?? []
+  const kpiPreviousRows = activeKpiData?.previous_week ?? []
+
+  const pageviewsCurrent = sumMetric(kpiCurrentRows, 'screenpage_views')
+  const pageviewsPrevious = sumMetric(kpiPreviousRows, 'screenpage_views')
+  const sessionsCurrent = sumMetric(kpiCurrentRows, 'sessions')
+  const sessionsPrevious = sumMetric(kpiPreviousRows, 'sessions')
+  const usersCurrent = sumMetric(kpiCurrentRows, 'active_users')
+  const usersPrevious = sumMetric(kpiPreviousRows, 'active_users')
+  const conversionCurrent = calculateConversionRate(kpiCurrentRows)
+  const conversionPrevious = calculateConversionRate(kpiPreviousRows)
+
+  const producerCategories = useMemo(() => {
     if (!activeProducerAorData) return []
-    return aggregateCategories(activeProducerAorData.current_week, activeProducerAorData.previous_week)
+
+    const categories = aggregateCategories(activeProducerAorData.current_week, activeProducerAorData.previous_week)
+
+    return categories.map((category): CategoryTableRow => {
+      const categoryAddToCarts = sumMetric(category.pages, 'add_to_carts')
+      const categoryBounceRate = averageMetric(category.pages, 'bounce_rate')
+      const categoryConversionRate =
+        category.sessions > 0 ? (category.purchases / category.sessions) * 100 : null
+      const hasCategoryEcommerce = category.pages.some(
+        (row) =>
+          row.add_to_carts !== null ||
+          row.ecommerce_purchases !== null ||
+          row.purchase_revenue !== null ||
+          row.item_revenue !== null
+      )
+      const categoryAtcRate =
+        hasCategoryEcommerce && category.sessions > 0
+          ? (categoryAddToCarts / category.sessions) * 100
+          : null
+
+      return {
+        category: category.category,
+        pageviews: category.pageviews,
+        sessions: category.sessions,
+        users: category.users,
+        revenue: category.revenue,
+        wowViews: category.wowViews,
+        pages: category.pages,
+        addToCarts: categoryAddToCarts,
+        addToCartRate: categoryAtcRate,
+        bounceRate: categoryBounceRate,
+        conversionRate: categoryConversionRate,
+      }
+    })
   }, [activeProducerAorData])
+
+  const sortedCategories = useMemo(() => {
+    const rows = [...producerCategories]
+
+    rows.sort((a, b) => {
+      switch (sortKey) {
+        case 'category':
+          return a.category.localeCompare(b.category)
+        case 'pageviews':
+          return a.pageviews - b.pageviews
+        case 'sessions':
+          return a.sessions - b.sessions
+        case 'users':
+          return a.users - b.users
+        case 'addToCartRate':
+          return compareNullableNumber(a.addToCartRate, b.addToCartRate)
+        case 'bounceRate':
+          return compareNullableNumber(a.bounceRate, b.bounceRate)
+        case 'conversionRate':
+          return compareNullableNumber(a.conversionRate, b.conversionRate)
+        case 'revenue':
+          return a.revenue - b.revenue
+        case 'wowViews':
+          return compareNullableNumber(a.wowViews, b.wowViews)
+        default:
+          return 0
+      }
+    })
+
+    if (sortDirection === 'desc') {
+      rows.reverse()
+    }
+
+    return rows
+  }, [producerCategories, sortDirection, sortKey])
 
   const teamProducerCards = useMemo(() => {
     if (!teamAorData) return []
     return aggregateProducers(teamAorData.current_week)
   }, [teamAorData])
 
-  const activeAorData =
-    aorView === 'team' && isAdmin
-      ? teamAorData
-      : activeProducerAorData
+  const highlights = useMemo(
+    () => buildPageHighlights(kpiCurrentRows, kpiPreviousRows),
+    [kpiCurrentRows, kpiPreviousRows]
+  )
 
   const adWeek = siteData?.ad_week
-  const adWeekLabel = adWeek
-    ? `Ad Week ${adWeek.week_number}`
-    : 'Ad Week'
-
+  const adWeekLabel = adWeek ? `Ad Week ${adWeek.week_number}` : 'Ad Week'
   const disabledForCooldown = nowMs < cooldownUntil
   const cooldownSeconds = Math.max(0, Math.ceil((cooldownUntil - nowMs) / 1000))
 
-  const isEmpty = !siteLoading && !siteError && currentRows.length === 0 && previousRows.length === 0
+  const isEmpty = !siteLoading && !siteError && (siteData?.current_week?.length ?? 0) === 0
+  const kpiUnavailable = aorView === 'producer' && !activeProducerAorData
+
+  function handleSort(column: SortKey) {
+    setExpandedCategory(null)
+
+    if (sortKey === column) {
+      setSortDirection((current) => (current === 'desc' ? 'asc' : 'desc'))
+      return
+    }
+
+    setSortKey(column)
+    setSortDirection(column === 'category' ? 'asc' : 'desc')
+  }
 
   return (
     <section className="space-y-6">
-      {siteLoading && !siteData ? (
-        <LoadingSkeleton />
-      ) : null}
+      {siteLoading && !siteData ? <LoadingSkeleton /> : null}
 
       {!siteLoading && siteError && !siteData ? (
         <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-5">
           <p className="text-sm text-red-300">Unable to load analytics data.</p>
           <button
             type="button"
-            onClick={loadSiteData}
+            onClick={() => void loadSiteData()}
             className="mt-3 rounded-lg border border-brand-700 px-3 py-1.5 text-sm text-white hover:bg-brand-800/60"
           >
             Retry
@@ -334,151 +425,164 @@ export function Ga4Section({ profileId, allProfiles, userRole }: Props) {
           <div className="flex flex-col gap-3 rounded-xl border border-[#1a3a4a] border-l-4 border-l-cyan-400 bg-[#0d2137] px-4 py-3 md:flex-row md:items-center md:justify-between">
             <div className="text-sm">
               <span className="font-semibold text-white">{adWeekLabel}</span>
-              {adWeek ? <span className="ml-2 text-brand-300">{formatDateRange(adWeek.start_date, adWeek.end_date)}</span> : null}
+              {adWeek ? (
+                <span className="ml-2 text-brand-300">{formatDateRange(adWeek.start_date, adWeek.end_date)}</span>
+              ) : null}
             </div>
             <p className="text-xs italic text-brand-400">{adWeek?.notes || ' '}</p>
           </div>
 
-          <section className="space-y-4">
-            <div>
-              <h2 className="text-xl font-semibold text-white">Site Performance</h2>
-              <p className="mt-1 text-sm text-brand-400">
-                All pages · Ad Week {adWeek?.week_number ?? '--'} vs Ad Week{' '}
-                {adWeek?.week_number ? Math.max(1, adWeek.week_number - 1) : '--'}
+          <section className="space-y-4 rounded-2xl border border-brand-800 bg-brand-900 p-5">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                {isAdmin ? (
+                  <div className="inline-flex rounded-xl border border-brand-700 bg-brand-950 p-1">
+                    <button
+                      type="button"
+                      onClick={() => setAorView('producer')}
+                      className={`rounded-lg px-3 py-1.5 text-sm ${
+                        aorView === 'producer' ? 'bg-brand-700 text-white' : 'text-brand-300 hover:text-white'
+                      }`}
+                    >
+                      Producer View
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAorView('team')}
+                      className={`rounded-lg px-3 py-1.5 text-sm ${
+                        aorView === 'team' ? 'bg-brand-700 text-white' : 'text-brand-300 hover:text-white'
+                      }`}
+                    >
+                      Team View
+                    </button>
+                  </div>
+                ) : (
+                  <p className="text-xs text-brand-500">Your AOR breakdown</p>
+                )}
+
+                {isAdmin && aorView === 'producer' ? (
+                  <div className="flex items-center gap-2">
+                    <label htmlFor="performance-producer" className="text-xs uppercase tracking-wide text-brand-400">
+                      Producer
+                    </label>
+                    <select
+                      id="performance-producer"
+                      value={selectedAorProfileId}
+                      onChange={(event) => setSelectedAorProfileId(event.target.value)}
+                      className="rounded-lg border border-brand-700 bg-brand-950 px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    >
+                      {allProfiles.map((profile) => (
+                        <option key={profile.id} value={profile.id}>
+                          {profile.full_name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : null}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => void handleRefresh()}
+                disabled={refreshing || disabledForCooldown}
+                className="inline-flex items-center gap-2 rounded-lg border border-brand-700 px-3 py-1.5 text-sm text-brand-200 transition-colors hover:bg-brand-800/50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {refreshing ? (
+                  <span className="h-3 w-3 animate-spin rounded-full border border-brand-300 border-t-transparent" />
+                ) : null}
+                <span>↻ Refresh</span>
+                {disabledForCooldown && !refreshing ? <span>({cooldownSeconds}s)</span> : null}
+              </button>
+            </div>
+
+            {kpiUnavailable && aorLoading ? (
+              <div className="h-28 animate-pulse rounded-xl bg-brand-800/50" />
+            ) : null}
+
+            {kpiUnavailable && !aorLoading && !aorError ? (
+              <p className="text-sm text-brand-500">
+                {isAdmin
+                  ? 'No AOR-mapped pages found for the selected producer.'
+                  : 'No AOR-mapped pages found for your profile.'}
               </p>
-            </div>
+            ) : null}
 
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <StatsCard
-                label="Pageviews"
-                value={formatInteger(pageviewsCurrent)}
-                delta={buildDeltaBadge({ change: pctChange(pageviewsCurrent, pageviewsPrevious) })}
-              />
-              <StatsCard
-                label="Sessions"
-                value={formatInteger(sessionsCurrent)}
-                delta={buildDeltaBadge({ change: pctChange(sessionsCurrent, sessionsPrevious) })}
-              />
-              <StatsCard
-                label="Active Users"
-                value={formatInteger(usersCurrent)}
-                delta={buildDeltaBadge({ change: pctChange(usersCurrent, usersPrevious) })}
-              />
-              <StatsCard
-                label="Conversion Rate"
-                value={conversionCurrent === null ? '—' : formatPercent(conversionCurrent, 2)}
-                delta={buildDeltaBadge({ change: pointsDelta(conversionCurrent, conversionPrevious), suffix: 'pts' })}
-              />
-            </div>
-
-            {ecommerceVisible ? (
+            {!kpiUnavailable ? (
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-                <SecondaryCard
-                  label="Revenue"
-                  value={formatCurrency(revenueCurrent)}
-                  delta={buildDeltaBadge({ change: pctChange(revenueCurrent, revenuePrevious) })}
+                <StatsCard
+                  label="Pageviews"
+                  value={formatInteger(pageviewsCurrent)}
+                  delta={buildDeltaBadge({ change: pctChange(pageviewsCurrent, pageviewsPrevious) })}
                 />
-                <SecondaryCard
-                  label="Transactions"
-                  value={formatInteger(transactionsCurrent)}
-                  delta={buildDeltaBadge({ change: pctChange(transactionsCurrent, transactionsPrevious) })}
+                <StatsCard
+                  label="Sessions"
+                  value={formatInteger(sessionsCurrent)}
+                  delta={buildDeltaBadge({ change: pctChange(sessionsCurrent, sessionsPrevious) })}
                 />
-                <SecondaryCard
-                  label="Add to Carts"
-                  value={formatInteger(addToCartsCurrent)}
-                  delta={buildDeltaBadge({ change: pctChange(addToCartsCurrent, addToCartsPrevious) })}
+                <StatsCard
+                  label="Active Users"
+                  value={formatInteger(usersCurrent)}
+                  delta={buildDeltaBadge({ change: pctChange(usersCurrent, usersPrevious) })}
                 />
-                <SecondaryCard
-                  label="Avg Bounce Rate"
-                  value={bounceCurrent === null ? '—' : formatPercent(bounceCurrent, 1)}
-                  delta={buildDeltaBadge({
-                    change: pointsDelta(bounceCurrent, bouncePrevious),
-                    suffix: 'pts',
-                    invertDirection: true,
-                  })}
+                <StatsCard
+                  label="Conversion Rate"
+                  value={conversionCurrent === null ? '—' : formatPercent(conversionCurrent, 2)}
+                  delta={buildDeltaBadge({ change: pointsDelta(conversionCurrent, conversionPrevious), suffix: 'pts' })}
                 />
               </div>
-            ) : (
-              <p className="text-sm text-brand-500">Ecommerce tracking data not yet available</p>
-            )}
+            ) : null}
           </section>
 
           <section className="space-y-4 rounded-2xl border border-brand-800 bg-brand-900 p-5">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <h3 className="text-lg font-semibold text-white">Category Performance</h3>
-              {isAdmin ? (
-                <div className="inline-flex rounded-xl border border-brand-700 bg-brand-950 p-1">
-                  <button
-                    type="button"
-                    onClick={() => setAorView('producer')}
-                    className={`rounded-lg px-3 py-1.5 text-sm ${
-                      aorView === 'producer' ? 'bg-brand-700 text-white' : 'text-brand-300 hover:text-white'
-                    }`}
-                  >
-                    Producer View
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAorView('team')}
-                    className={`rounded-lg px-3 py-1.5 text-sm ${
-                      aorView === 'team' ? 'bg-brand-700 text-white' : 'text-brand-300 hover:text-white'
-                    }`}
-                  >
-                    Team Overview
-                  </button>
-                </div>
-              ) : (
-                <p className="text-xs text-brand-500">Your AOR breakdown</p>
-              )}
-            </div>
+            <h3 className="text-lg font-semibold text-white">Category Breakdown</h3>
 
-            {isAdmin && aorView === 'producer' ? (
-              <div className="flex items-center gap-2">
-                <label htmlFor="aor-producer" className="text-xs uppercase tracking-wide text-brand-400">
-                  Producer
-                </label>
-                <select
-                  id="aor-producer"
-                  value={selectedAorProfileId}
-                  onChange={(event) => setSelectedAorProfileId(event.target.value)}
-                  className="rounded-lg border border-brand-700 bg-brand-950 px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-brand-500"
-                >
-                  {allProfiles.map((profile) => (
-                    <option key={profile.id} value={profile.id}>
-                      {profile.full_name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ) : null}
-
-            {aorLoading && !activeAorData ? (
+            {aorLoading && aorView === 'producer' && !activeProducerAorData ? (
               <div className="h-28 animate-pulse rounded-xl bg-brand-800/50" />
             ) : null}
 
             {!aorLoading && aorError ? <p className="text-sm text-red-300">{aorError}</p> : null}
 
             {!aorLoading && !aorError && aorView === 'producer' ? (
-              myAorCategories.length > 0 ? (
+              sortedCategories.length > 0 ? (
                 <div className="overflow-x-auto">
                   <table className="min-w-full text-sm">
                     <thead>
                       <tr className="text-left text-xs uppercase tracking-wide text-[#4a9ead]">
-                        <th className="px-3 py-2">Category</th>
-                        <th className="px-3 py-2">Pageviews</th>
-                        <th className="px-3 py-2">Sessions</th>
-                        <th className="px-3 py-2">Users</th>
-                        <th className="px-3 py-2">Conv. Rate</th>
-                        <th className="px-3 py-2">Revenue</th>
-                        <th className="px-3 py-2">WoW Δ Views</th>
+                        <th className="cursor-pointer px-3 py-2" onClick={() => handleSort('category')}>
+                          Category{sortIndicator('category', sortKey, sortDirection)}
+                        </th>
+                        <th className="cursor-pointer px-3 py-2" onClick={() => handleSort('pageviews')}>
+                          Pageviews{sortIndicator('pageviews', sortKey, sortDirection)}
+                        </th>
+                        <th className="cursor-pointer px-3 py-2" onClick={() => handleSort('sessions')}>
+                          Sessions{sortIndicator('sessions', sortKey, sortDirection)}
+                        </th>
+                        <th className="cursor-pointer px-3 py-2" onClick={() => handleSort('users')}>
+                          Users{sortIndicator('users', sortKey, sortDirection)}
+                        </th>
+                        <th className="cursor-pointer px-3 py-2" onClick={() => handleSort('addToCartRate')}>
+                          Add-to-Cart Rate{sortIndicator('addToCartRate', sortKey, sortDirection)}
+                        </th>
+                        <th className="cursor-pointer px-3 py-2" onClick={() => handleSort('bounceRate')}>
+                          Bounce Rate{sortIndicator('bounceRate', sortKey, sortDirection)}
+                        </th>
+                        <th className="cursor-pointer px-3 py-2" onClick={() => handleSort('conversionRate')}>
+                          Conv. Rate{sortIndicator('conversionRate', sortKey, sortDirection)}
+                        </th>
+                        <th className="cursor-pointer px-3 py-2" onClick={() => handleSort('revenue')}>
+                          Revenue{sortIndicator('revenue', sortKey, sortDirection)}
+                        </th>
+                        <th className="cursor-pointer px-3 py-2" onClick={() => handleSort('wowViews')}>
+                          WoW Δ Views{sortIndicator('wowViews', sortKey, sortDirection)}
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
-                      {myAorCategories.map((category) => {
-                        const conversionRate =
-                          category.sessions > 0 ? (category.purchases / category.sessions) * 100 : null
+                      {sortedCategories.map((category) => {
                         const wowBadge = buildDeltaBadge({ change: category.wowViews })
                         const isExpanded = expandedCategory === category.category
+                        const atcTone = atcRateTone(category.addToCartRate)
+                        const bounceTone = bounceRateTone(category.bounceRate)
 
                         return (
                           <Fragment key={category.category}>
@@ -494,32 +598,52 @@ export function Ga4Section({ profileId, allProfiles, userRole }: Props) {
                               <td className="px-3 py-2 text-white">{formatInteger(category.pageviews)}</td>
                               <td className="px-3 py-2 text-white">{formatInteger(category.sessions)}</td>
                               <td className="px-3 py-2 text-white">{formatInteger(category.users)}</td>
+                              <td className={`px-3 py-2 font-medium ${atcTone}`}>
+                                {category.addToCartRate === null ? '—' : formatPercent(category.addToCartRate, 1)}
+                              </td>
+                              <td className={`px-3 py-2 font-medium ${bounceTone}`}>
+                                {category.bounceRate === null ? '—' : formatPercent(category.bounceRate, 1)}
+                              </td>
                               <td className="px-3 py-2 text-white">
-                                {conversionRate === null ? '—' : formatPercent(conversionRate, 1)}
+                                {category.conversionRate === null ? '—' : formatPercent(category.conversionRate, 1)}
                               </td>
                               <td className="px-3 py-2 text-white">{formatCurrency(category.revenue)}</td>
                               <td className={`px-3 py-2 font-medium ${wowBadge.className}`}>{wowBadge.text}</td>
                             </tr>
                             {isExpanded ? (
                               <tr className="bg-brand-950/40">
-                                <td colSpan={7} className="px-3 py-3">
+                                <td colSpan={9} className="px-3 py-3">
                                   <div className="overflow-x-auto">
                                     <table className="min-w-full text-xs">
                                       <thead>
                                         <tr className="text-left uppercase text-brand-400">
-                                          <th className="pb-2">Top Pages</th>
-                                          <th className="pb-2">Views</th>
+                                          <th className="pb-2">Page Path</th>
+                                          <th className="pb-2">Pageviews</th>
                                           <th className="pb-2">Sessions</th>
+                                          <th className="pb-2">Bounce Rate</th>
+                                          <th className="pb-2">Add-to-Carts</th>
                                         </tr>
                                       </thead>
                                       <tbody>
-                                        {category.pages.slice(0, 5).map((page) => (
+                                        {category.pages.slice(0, 10).map((page) => (
                                           <tr key={`${category.category}-${page.page_path}`}>
                                             <td className="py-1 text-brand-200" title={page.page_path}>
-                                              {truncatePath(page.page_path, 65)}
+                                              {truncatePath(page.page_path, 80)}
                                             </td>
-                                            <td className="py-1 text-white">{formatInteger(toNumber(page.screenpage_views))}</td>
-                                            <td className="py-1 text-white">{formatInteger(toNumber(page.sessions))}</td>
+                                            <td className="py-1 text-white">
+                                              {formatInteger(toNumber(page.screenpage_views))}
+                                            </td>
+                                            <td className="py-1 text-white">
+                                              {formatInteger(toNumber(page.sessions))}
+                                            </td>
+                                            <td className="py-1 text-white">
+                                              {page.bounce_rate === null || page.bounce_rate === undefined
+                                                ? '—'
+                                                : formatPercent(toNumber(page.bounce_rate), 1)}
+                                            </td>
+                                            <td className="py-1 text-white">
+                                              {formatInteger(toNumber(page.add_to_carts))}
+                                            </td>
                                           </tr>
                                         ))}
                                       </tbody>
@@ -566,7 +690,10 @@ export function Ga4Section({ profileId, allProfiles, userRole }: Props) {
 
                           <div className="mt-3 space-y-1 text-sm">
                             {producer.topCategories.map((category) => (
-                              <div key={`${producer.producerName}-${category.category}`} className="flex items-center justify-between text-brand-200">
+                              <div
+                                key={`${producer.producerName}-${category.category}`}
+                                className="flex items-center justify-between text-brand-200"
+                              >
                                 <span>{category.category}</span>
                                 <span className="text-white">{formatInteger(category.views)}</span>
                               </div>
@@ -588,7 +715,7 @@ export function Ga4Section({ profileId, allProfiles, userRole }: Props) {
 
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
               <div>
-                <h4 className="mb-2 text-sm font-semibold text-white">Top Pages</h4>
+                <h4 className="mb-2 text-sm font-semibold text-white">Top Performers</h4>
                 <div className="overflow-x-auto">
                   <table className="min-w-full text-sm">
                     <thead>
@@ -661,7 +788,7 @@ export function Ga4Section({ profileId, allProfiles, userRole }: Props) {
             <p>Last updated {formatRelativeTime(siteData.last_refreshed, nowMs)}</p>
             <button
               type="button"
-              onClick={handleRefresh}
+              onClick={() => void handleRefresh()}
               disabled={refreshing || disabledForCooldown}
               className="inline-flex items-center gap-2 rounded-lg border border-brand-700 px-3 py-1.5 text-sm text-brand-200 transition-colors hover:bg-brand-800/50 disabled:cursor-not-allowed disabled:opacity-50"
             >
