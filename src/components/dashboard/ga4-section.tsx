@@ -70,6 +70,7 @@ interface ProducerAggregate {
 interface Props {
   profileId: string
   allProfiles: ProfileOption[]
+  userRole?: string | null
 }
 
 function toNumber(value: unknown) {
@@ -400,15 +401,17 @@ function LoadingSkeleton() {
   )
 }
 
-export function Ga4Section({ profileId, allProfiles }: Props) {
+export function Ga4Section({ profileId, allProfiles, userRole }: Props) {
+  const isAdmin = userRole === 'admin'
   const [siteData, setSiteData] = useState<MetricsResponse | null>(null)
-  const [myAorData, setMyAorData] = useState<MetricsResponse | null>(null)
+  const [aorDataByProfile, setAorDataByProfile] = useState<Record<string, MetricsResponse>>({})
   const [teamAorData, setTeamAorData] = useState<MetricsResponse | null>(null)
   const [siteLoading, setSiteLoading] = useState(true)
   const [siteError, setSiteError] = useState<string | null>(null)
   const [aorLoading, setAorLoading] = useState(false)
   const [aorError, setAorError] = useState<string | null>(null)
-  const [aorView, setAorView] = useState<'my' | 'team'>('my')
+  const [aorView, setAorView] = useState<'producer' | 'team'>('producer')
+  const [selectedAorProfileId, setSelectedAorProfileId] = useState(profileId)
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [cooldownUntil, setCooldownUntil] = useState(0)
@@ -443,23 +446,26 @@ export function Ga4Section({ profileId, allProfiles }: Props) {
     }
   }, [fetchMetrics])
 
-  const loadMyAorData = useCallback(
-    async (force = false) => {
-      if (!force && myAorData) return
+  const loadProfileAorData = useCallback(
+    async (targetProfileId: string, force = false) => {
+      if (!targetProfileId) return
+      if (!force && aorDataByProfile[targetProfileId]) return
 
       setAorLoading(true)
       setAorError(null)
 
       try {
-        const data = await fetchMetrics(`/api/ga4/metrics?scope=aor&profile_id=${profileId}`)
-        setMyAorData(data)
+        const data = await fetchMetrics(
+          `/api/ga4/metrics?scope=aor&profile_id=${encodeURIComponent(targetProfileId)}`
+        )
+        setAorDataByProfile((prev) => ({ ...prev, [targetProfileId]: data }))
       } catch (error) {
         setAorError(error instanceof Error ? error.message : 'Unable to load analytics data.')
       } finally {
         setAorLoading(false)
       }
     },
-    [fetchMetrics, myAorData, profileId]
+    [fetchMetrics, aorDataByProfile]
   )
 
   const loadTeamAorData = useCallback(
@@ -486,13 +492,30 @@ export function Ga4Section({ profileId, allProfiles }: Props) {
   }, [loadSiteData])
 
   useEffect(() => {
-    if (aorView === 'my') {
-      loadMyAorData()
+    if (!isAdmin) {
+      setSelectedAorProfileId(profileId)
       return
     }
 
-    loadTeamAorData()
-  }, [aorView, loadMyAorData, loadTeamAorData])
+    const isSelectedInList = allProfiles.some((profile) => profile.id === selectedAorProfileId)
+    if (!isSelectedInList) {
+      setSelectedAorProfileId(allProfiles[0]?.id ?? profileId)
+    }
+  }, [allProfiles, isAdmin, profileId, selectedAorProfileId])
+
+  useEffect(() => {
+    if (aorView === 'team') {
+      if (isAdmin) {
+        loadTeamAorData()
+      }
+      return
+    }
+
+    const targetProfileId = isAdmin ? selectedAorProfileId : profileId
+    if (targetProfileId) {
+      loadProfileAorData(targetProfileId)
+    }
+  }, [aorView, isAdmin, loadProfileAorData, loadTeamAorData, profileId, selectedAorProfileId])
 
   const handleRefresh = useCallback(async () => {
     if (refreshing || nowMs < cooldownUntil) {
@@ -509,10 +532,11 @@ export function Ga4Section({ profileId, allProfiles }: Props) {
       }
 
       await loadSiteData()
-      if (myAorData || aorView === 'my') {
-        await loadMyAorData(true)
+      const targetProfileId = isAdmin ? selectedAorProfileId : profileId
+      if (targetProfileId) {
+        await loadProfileAorData(targetProfileId, true)
       }
-      if (teamAorData || aorView === 'team') {
+      if (isAdmin && (teamAorData || aorView === 'team')) {
         await loadTeamAorData(true)
       }
     } catch (error) {
@@ -524,10 +548,12 @@ export function Ga4Section({ profileId, allProfiles }: Props) {
     refreshing,
     nowMs,
     cooldownUntil,
+    isAdmin,
+    selectedAorProfileId,
+    profileId,
     loadSiteData,
-    myAorData,
     aorView,
-    loadMyAorData,
+    loadProfileAorData,
     teamAorData,
     loadTeamAorData,
   ])
@@ -566,17 +592,25 @@ export function Ga4Section({ profileId, allProfiles }: Props) {
     [currentRows, previousRows]
   )
 
+  const activeProducerProfileId = isAdmin ? selectedAorProfileId : profileId
+  const activeProducerAorData = activeProducerProfileId
+    ? (aorDataByProfile[activeProducerProfileId] ?? null)
+    : null
+
   const myAorCategories = useMemo(() => {
-    if (!myAorData) return []
-    return aggregateCategories(myAorData.current_week, myAorData.previous_week)
-  }, [myAorData])
+    if (!activeProducerAorData) return []
+    return aggregateCategories(activeProducerAorData.current_week, activeProducerAorData.previous_week)
+  }, [activeProducerAorData])
 
   const teamProducerCards = useMemo(() => {
     if (!teamAorData) return []
     return aggregateProducers(teamAorData.current_week)
   }, [teamAorData])
 
-  const activeAorData = aorView === 'my' ? myAorData : teamAorData
+  const activeAorData =
+    aorView === 'team' && isAdmin
+      ? teamAorData
+      : activeProducerAorData
 
   const adWeek = siteData?.ad_week
   const adWeekLabel = adWeek
@@ -690,27 +724,51 @@ export function Ga4Section({ profileId, allProfiles }: Props) {
           <section className="space-y-4 rounded-2xl border border-brand-800 bg-brand-900 p-5">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <h3 className="text-lg font-semibold text-white">Category Performance</h3>
-              <div className="inline-flex rounded-xl border border-brand-700 bg-brand-950 p-1">
-                <button
-                  type="button"
-                  onClick={() => setAorView('my')}
-                  className={`rounded-lg px-3 py-1.5 text-sm ${
-                    aorView === 'my' ? 'bg-brand-700 text-white' : 'text-brand-300 hover:text-white'
-                  }`}
-                >
-                  My Pages
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAorView('team')}
-                  className={`rounded-lg px-3 py-1.5 text-sm ${
-                    aorView === 'team' ? 'bg-brand-700 text-white' : 'text-brand-300 hover:text-white'
-                  }`}
-                >
-                  Team Overview
-                </button>
-              </div>
+              {isAdmin ? (
+                <div className="inline-flex rounded-xl border border-brand-700 bg-brand-950 p-1">
+                  <button
+                    type="button"
+                    onClick={() => setAorView('producer')}
+                    className={`rounded-lg px-3 py-1.5 text-sm ${
+                      aorView === 'producer' ? 'bg-brand-700 text-white' : 'text-brand-300 hover:text-white'
+                    }`}
+                  >
+                    Producer View
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAorView('team')}
+                    className={`rounded-lg px-3 py-1.5 text-sm ${
+                      aorView === 'team' ? 'bg-brand-700 text-white' : 'text-brand-300 hover:text-white'
+                    }`}
+                  >
+                    Team Overview
+                  </button>
+                </div>
+              ) : (
+                <p className="text-xs text-brand-500">Your AOR breakdown</p>
+              )}
             </div>
+
+            {isAdmin && aorView === 'producer' ? (
+              <div className="flex items-center gap-2">
+                <label htmlFor="aor-producer" className="text-xs uppercase tracking-wide text-brand-400">
+                  Producer
+                </label>
+                <select
+                  id="aor-producer"
+                  value={selectedAorProfileId}
+                  onChange={(event) => setSelectedAorProfileId(event.target.value)}
+                  className="rounded-lg border border-brand-700 bg-brand-950 px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-brand-500"
+                >
+                  {allProfiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.full_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
 
             {aorLoading && !activeAorData ? (
               <div className="h-28 animate-pulse rounded-xl bg-brand-800/50" />
@@ -718,7 +776,7 @@ export function Ga4Section({ profileId, allProfiles }: Props) {
 
             {!aorLoading && aorError ? <p className="text-sm text-red-300">{aorError}</p> : null}
 
-            {!aorLoading && !aorError && aorView === 'my' ? (
+            {!aorLoading && !aorError && aorView === 'producer' ? (
               myAorCategories.length > 0 ? (
                 <div className="overflow-x-auto">
                   <table className="min-w-full text-sm">
@@ -795,11 +853,15 @@ export function Ga4Section({ profileId, allProfiles }: Props) {
                   </table>
                 </div>
               ) : (
-                <p className="text-sm text-brand-500">No AOR-mapped pages found for your profile.</p>
+                <p className="text-sm text-brand-500">
+                  {isAdmin
+                    ? 'No AOR-mapped pages found for the selected producer.'
+                    : 'No AOR-mapped pages found for your profile.'}
+                </p>
               )
             ) : null}
 
-            {!aorLoading && !aorError && aorView === 'team' ? (
+            {!aorLoading && !aorError && isAdmin && aorView === 'team' ? (
               teamProducerCards.length > 0 ? (
                 <div className="space-y-3">
                   <p className="text-xs text-brand-500">Team Overview across {allProfiles.length} profiles</p>
