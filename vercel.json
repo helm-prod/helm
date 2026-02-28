@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/ga4/refresh",
-      "schedule": "0 */4 * * *"
+      "schedule": "0 3 * * *"
     }
   ]
 }
