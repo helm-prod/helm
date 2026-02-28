@@ -428,6 +428,46 @@ export interface SopAcknowledgment {
   acknowledged_at: string
 }
 
+export interface AiInsight {
+  id: string
+  insight_type: string
+  scope: string | null
+  ad_week_id: string | null
+  prompt_summary: string | null
+  response_text: string
+  model_used: string
+  tokens_used: number | null
+  generated_at: string
+  expires_at: string | null
+}
+
+export interface PagespeedResult {
+  id: string
+  url: string
+  strategy: 'mobile' | 'desktop'
+  category: string | null
+  performance_score: number | null
+  lcp_ms: number | null
+  cls: number | null
+  inp_ms: number | null
+  fcp_ms: number | null
+  ttfb_ms: number | null
+  speed_index_ms: number | null
+  total_blocking_time_ms: number | null
+  crux_lcp_p75_ms: number | null
+  crux_cls_p75: number | null
+  crux_inp_p75_ms: number | null
+  crux_fcp_p75_ms: number | null
+  crux_ttfb_p75_ms: number | null
+  lcp_rating: string | null
+  cls_rating: string | null
+  inp_rating: string | null
+  raw_lighthouse: any
+  raw_crux: any
+  fetched_at: string
+  created_at: string
+}
+
 // Helper: compute generated_description from panel fields
 export function computeGeneratedDescription(fields: {
   prefix?: string | null
