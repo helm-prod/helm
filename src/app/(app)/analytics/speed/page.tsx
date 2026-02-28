@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import { PageGuard } from '@/components/page-guard'
+import { SpeedDashboard } from '@/components/analytics/speed-dashboard'
 
 export default async function SiteSpeedPage() {
   const supabase = createClient()
@@ -19,13 +20,10 @@ export default async function SiteSpeedPage() {
 
   return (
     <PageGuard pageSlug="analytics-speed">
-      <div className="max-w-4xl">
+      <div className="max-w-6xl">
         <h1 className="mb-2 text-2xl font-bold text-white">Site Speed</h1>
         <p className="mb-8 text-brand-400">Core Web Vitals and page load performance</p>
-
-        <div className="rounded-xl border border-brand-800 bg-brand-900 p-6 text-brand-300">
-          Site Speed dashboard coming soon - this page will show Core Web Vitals (LCP, CLS, INP) for key category pages.
-        </div>
+        <SpeedDashboard />
       </div>
     </PageGuard>
   )
