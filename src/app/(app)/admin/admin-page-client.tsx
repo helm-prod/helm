@@ -15,6 +15,22 @@ function roleBadgeClass(role: UserRole) {
   return 'border-blue-500/40 bg-blue-500/15 text-blue-200'
 }
 
+function TinyLockIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={2}
+      aria-hidden="true"
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" d="M16 11V7a4 4 0 10-8 0v4" />
+      <rect x="4" y="11" width="16" height="10" rx="2" ry="2" />
+    </svg>
+  )
+}
+
 function getRoleDefault(
   pageAccessMap: Map<string, boolean>,
   pageSlug: string,
@@ -446,6 +462,8 @@ export default function AdminPageClient() {
                         const override = overrideMap.get(`${user.id}:${page.slug}`)
                         const effective = override ? override.is_enabled : roleDefault
                         const hasOverride = Boolean(override && override.is_enabled !== roleDefault)
+                        const isGrantOverride = Boolean(override && override.is_enabled && !roleDefault)
+                        const isRevokeOverride = Boolean(override && !override.is_enabled && roleDefault)
                         const cellKey = `user:${user.id}:${page.slug}`
                         const isSaving = savingCellKey === cellKey
 
@@ -469,9 +487,19 @@ export default function AdminPageClient() {
                               </button>
                               {hasOverride && (
                                 <span
-                                  className="inline-block h-2 w-2 rounded-full bg-amber-300"
+                                  className="inline-flex items-center gap-1"
                                   title={`Overridden from role default (${roleDefault ? 'Enabled' : 'Disabled'})`}
-                                />
+                                >
+                                  {isGrantOverride && (
+                                    <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                                  )}
+                                  {isRevokeOverride && (
+                                    <>
+                                      <span className="h-2 w-2 rounded-full bg-red-400" />
+                                      <TinyLockIcon className="h-3 w-3 text-red-400" />
+                                    </>
+                                  )}
+                                </span>
                               )}
                             </div>
                           </td>
