@@ -23,7 +23,23 @@ interface Ga4UpsertRow extends Ga4ReportRow {
   ad_week_number: number
 }
 
-const REQUIRED_COLUMNS = ['page_path', 'period_start', 'period_end', 'period_type']
+const CONFLICT_COLUMNS = ['page_path', 'period_start', 'period_end', 'period_type'] as const
+const REQUIRED_COLUMNS: string[] = [...CONFLICT_COLUMNS]
+const SUMMABLE_METRIC_COLUMNS: Array<keyof Ga4UpsertRow> = [
+  'screenpage_views',
+  'active_users',
+  'sessions',
+  'bounce_rate',
+  'avg_session_duration',
+  'conversions',
+  'add_to_carts',
+  'ecommerce_purchases',
+  'item_revenue',
+  'cart_to_view_rate',
+  'purchase_to_view_rate',
+  'transactions_per_purchaser',
+  'purchase_revenue',
+]
 
 function toIsoDate(date: Date) {
   const year = date.getFullYear()
@@ -85,18 +101,60 @@ function projectColumns(rows: Ga4UpsertRow[], allowedColumns: string[]) {
   })
 }
 
+function sumNullableNumbers(currentValue: number | null, incomingValue: number | null) {
+  if (currentValue === null && incomingValue === null) return null
+  return (currentValue ?? 0) + (incomingValue ?? 0)
+}
+
+function dedupeRowsForUpsert(rows: Ga4UpsertRow[]) {
+  const deduped = new Map<string, Ga4UpsertRow>()
+
+  for (const row of rows) {
+    const key = `${row.page_path}|${row.period_start}|${row.period_end}|${row.period_type}`
+    const existing = deduped.get(key)
+
+    if (!existing) {
+      deduped.set(key, { ...row })
+      continue
+    }
+
+    for (const column of SUMMABLE_METRIC_COLUMNS) {
+      const mergedValue = sumNullableNumbers(
+        existing[column] as number | null,
+        row[column] as number | null
+      )
+      existing[column] = mergedValue as never
+    }
+
+    if (row.page_title) {
+      existing.page_title = row.page_title
+    }
+
+    if (typeof row.ad_week_number === 'number') {
+      existing.ad_week_number = row.ad_week_number
+    }
+  }
+
+  return Array.from(deduped.values())
+}
+
 async function upsertWithFallback(rows: Ga4UpsertRow[]) {
   if (rows.length === 0) return 0
 
+  const dedupedRows = dedupeRowsForUpsert(rows)
   const supabase = createServiceRoleClient()
   let allowedColumns = Array.from(
-    new Set(rows.flatMap((row) => Object.keys(row).filter((key) => row[key as keyof Ga4UpsertRow] !== undefined)))
+    new Set(
+      dedupedRows.flatMap((row) =>
+        Object.keys(row).filter((key) => row[key as keyof Ga4UpsertRow] !== undefined)
+      )
+    )
   )
 
   while (allowedColumns.length > 0) {
-    const payload = projectColumns(rows, allowedColumns)
+    const payload = projectColumns(dedupedRows, allowedColumns)
     const { error } = await supabase.from('ga4_page_metrics').upsert(payload, {
-      onConflict: 'page_path,period_start,period_end,period_type',
+      onConflict: CONFLICT_COLUMNS.join(','),
     })
 
     if (!error) {

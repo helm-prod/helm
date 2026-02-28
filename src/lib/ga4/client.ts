@@ -45,7 +45,13 @@ interface Ga4RunReportResponse {
 type MetricName =
   | 'screenPageViews'
   | 'activeUsers'
+  | 'totalUsers'
   | 'sessions'
+  | 'engagedSessions'
+  | 'userEngagementDuration'
+  | 'engagementRate'
+  | 'screenPageViewsPerSession'
+  | 'newUsers'
   | 'bounceRate'
   | 'averageSessionDuration'
   | 'conversions'
@@ -57,15 +63,20 @@ type MetricName =
   | 'transactionsPerPurchaser'
   | 'purchaseRevenue'
 
-const CORE_METRICS: MetricName[] = [
+const CORE_METRICS_BATCH: MetricName[] = [
   'screenPageViews',
-  'activeUsers',
+  'totalUsers',
   'sessions',
+  'engagedSessions',
+  'userEngagementDuration',
   'bounceRate',
+  'engagementRate',
   'averageSessionDuration',
+  'screenPageViewsPerSession',
+  'newUsers',
 ]
 
-const OPTIONAL_METRICS: MetricName[] = [
+const ECOMMERCE_METRICS_BATCH: MetricName[] = [
   'conversions',
   'addToCarts',
   'ecommercePurchases',
@@ -76,7 +87,12 @@ const OPTIONAL_METRICS: MetricName[] = [
   'purchaseRevenue',
 ]
 
-const ALL_METRICS: MetricName[] = [...CORE_METRICS, ...OPTIONAL_METRICS]
+const CORE_FALLBACK_BATCHES: MetricName[][] = [
+  ['screenPageViews', 'totalUsers', 'sessions', 'bounceRate', 'averageSessionDuration'],
+  ['engagedSessions', 'userEngagementDuration', 'engagementRate', 'screenPageViewsPerSession', 'newUsers'],
+]
+
+const MAX_GA4_METRICS_PER_REQUEST = 10
 
 const DIMENSIONS = ['pagePath', 'pageTitle']
 
@@ -167,6 +183,12 @@ async function runReportRequest({
   endDate: string
   metrics: MetricName[]
 }): Promise<Ga4RunReportResponse> {
+  if (metrics.length > MAX_GA4_METRICS_PER_REQUEST) {
+    throw new Error(
+      `GA4 metric batch exceeds ${MAX_GA4_METRICS_PER_REQUEST} metrics (${metrics.length})`
+    )
+  }
+
   const response = await fetch(`https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`, {
     method: 'POST',
     headers: {
@@ -227,6 +249,7 @@ function mapMetricToColumn(row: Ga4ReportRow, metricName: string, value: string 
     case 'screenPageViews':
       row.screenpage_views = toInteger(value)
       return
+    case 'totalUsers':
     case 'activeUsers':
       row.active_users = toInteger(value)
       return
@@ -303,44 +326,57 @@ export async function fetchGa4Report({ startDate, endDate }: FetchGa4ReportArgs)
 
   const accessToken = await getGa4AccessToken()
   const mergedRows = new Map<string, Ga4ReportRow>()
+  let hasCoreData = false
 
   try {
-    const fullReport = await runReportRequest({
+    const coreReport = await runReportRequest({
       accessToken,
       propertyId,
       startDate,
       endDate,
-      metrics: ALL_METRICS,
+      metrics: CORE_METRICS_BATCH,
     })
 
-    mergeReportRows(mergedRows, fullReport)
-    return Array.from(mergedRows.values())
-  } catch (fullReportError) {
-    console.warn('GA4 full metric fetch failed, falling back to partial fetch strategy.', fullReportError)
+    mergeReportRows(mergedRows, coreReport)
+    hasCoreData = true
+  } catch (coreBatchError) {
+    console.warn(
+      'GA4 core batch failed, switching to fallback core batches (<=10 metrics each).',
+      coreBatchError
+    )
+
+    for (const batch of CORE_FALLBACK_BATCHES) {
+      try {
+        const report = await runReportRequest({
+          accessToken,
+          propertyId,
+          startDate,
+          endDate,
+          metrics: batch,
+        })
+        mergeReportRows(mergedRows, report)
+        hasCoreData = true
+      } catch (fallbackError) {
+        console.warn(`GA4 fallback core metric batch failed: ${batch.join(', ')}`, fallbackError)
+      }
+    }
   }
 
-  const baseReport = await runReportRequest({
-    accessToken,
-    propertyId,
-    startDate,
-    endDate,
-    metrics: CORE_METRICS,
-  })
-  mergeReportRows(mergedRows, baseReport)
+  if (!hasCoreData) {
+    throw new Error('Failed to fetch required GA4 core metrics')
+  }
 
-  for (const metric of OPTIONAL_METRICS) {
-    try {
-      const report = await runReportRequest({
-        accessToken,
-        propertyId,
-        startDate,
-        endDate,
-        metrics: [metric],
-      })
-      mergeReportRows(mergedRows, report)
-    } catch (error) {
-      console.warn(`GA4 optional metric unavailable: ${metric}`, error)
-    }
+  try {
+    const ecommerceReport = await runReportRequest({
+      accessToken,
+      propertyId,
+      startDate,
+      endDate,
+      metrics: ECOMMERCE_METRICS_BATCH,
+    })
+    mergeReportRows(mergedRows, ecommerceReport)
+  } catch (error) {
+    console.warn('GA4 ecommerce metric batch unavailable. Continuing with core metrics only.', error)
   }
 
   return Array.from(mergedRows.values())
