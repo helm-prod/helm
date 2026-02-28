@@ -168,6 +168,13 @@ function formatMilliseconds(ms: number | null, fallback = '—') {
 
 function formatCls(cls: number | null, fallback = '—') {
   if (cls === null || !Number.isFinite(cls)) return fallback
+  if (cls === 0) return '0'
+
+  const absoluteCls = Math.abs(cls)
+  if (absoluteCls < 0.01) {
+    return cls.toFixed(3)
+  }
+
   return cls.toFixed(2)
 }
 
@@ -229,6 +236,14 @@ function getPageLabel(url: string) {
   } catch {
     return url
   }
+}
+
+function getDisplayedInpMs(row: Pick<PagespeedResult, 'inp_ms' | 'crux_inp_p75_ms'>) {
+  return row.inp_ms ?? row.crux_inp_p75_ms
+}
+
+function isInpUsingCruxFallback(row: Pick<PagespeedResult, 'inp_ms' | 'crux_inp_p75_ms'>) {
+  return row.inp_ms === null && row.crux_inp_p75_ms !== null
 }
 
 async function parseApiError(response: Response) {
@@ -401,6 +416,8 @@ export function SpeedDashboard() {
   }, [results])
 
   const homepageResult = useMemo(() => getHomepageResult(results), [results])
+  const homepageInpMs = homepageResult ? getDisplayedInpMs(homepageResult) : null
+  const homepageInpFromCrux = homepageResult ? isInpUsingCruxFallback(homepageResult) : false
   const lastScannedLabel = formatRelativeTime(lastUpdated, nowMs)
   const isEmpty = !loading && results.length === 0
   const progressPercent =
@@ -499,10 +516,12 @@ export function SpeedDashboard() {
           />
           <OverviewCard
             label="Interaction to Next Paint"
-            value={formatMilliseconds(homepageResult.inp_ms, 'N/A')}
-            status={getInpStatus(homepageResult.inp_ms)}
+            value={formatMilliseconds(homepageInpMs, 'N/A')}
+            status={getInpStatus(homepageInpMs)}
             subtitle={
-              homepageResult.crux_inp_p75_ms !== null
+              homepageInpFromCrux
+                ? 'Real users (p75)'
+                : homepageResult.crux_inp_p75_ms !== null
                 ? `Real users: ${formatMilliseconds(homepageResult.crux_inp_p75_ms, 'N/A')}`
                 : null
             }
@@ -568,15 +587,18 @@ export function SpeedDashboard() {
                     const scoreStatus = getScoreStatus(row.performance_score)
                     const lcpStatus = getLcpStatus(row.lcp_ms)
                     const clsStatus = getClsStatus(row.cls)
-                    const inpStatus = getInpStatus(row.inp_ms)
+                    const displayedInpMs = getDisplayedInpMs(row)
+                    const inpStatus = getInpStatus(displayedInpMs)
                     const fcpStatus = getFcpStatus(row.fcp_ms)
                     const ttfbStatus = getTtfbStatus(row.ttfb_ms)
+                    const inpFromCrux = isInpUsingCruxFallback(row)
                     const scoreTone = metricTone(scoreStatus)
                     const lcpTone = metricTone(lcpStatus)
                     const clsTone = metricTone(clsStatus)
                     const inpTone = metricTone(inpStatus)
                     const fcpTone = metricTone(fcpStatus)
                     const ttfbTone = metricTone(ttfbStatus)
+                    const inpValue = formatMilliseconds(displayedInpMs)
 
                     return (
                       <tr key={`${row.id}-${row.url}`} className="border-b border-brand-800/60 hover:bg-[#0d2137]">
@@ -595,8 +617,12 @@ export function SpeedDashboard() {
                         <td className={`px-3 py-2 font-medium ${clsTone.value}`}>
                           {formatCls(row.cls)}
                         </td>
-                        <td className={`px-3 py-2 font-medium ${inpTone.value}`}>
-                          {formatMilliseconds(row.inp_ms)}
+                        <td
+                          className={`px-3 py-2 font-medium ${inpTone.value}`}
+                          title={inpFromCrux ? 'INP from CrUX real-user field data (p75)' : undefined}
+                        >
+                          {inpValue}
+                          {inpFromCrux && inpValue !== '—' ? '*' : ''}
                         </td>
                         <td className={`px-3 py-2 font-medium ${fcpTone.value}`}>
                           {formatSeconds(row.fcp_ms)}

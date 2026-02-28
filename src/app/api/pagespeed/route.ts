@@ -179,6 +179,7 @@ export async function POST(request: NextRequest) {
   let apiCallsMade = 0
 
   const cutoffIso = new Date(Date.now() - CACHE_TTL_HOURS * 60 * 60 * 1000).toISOString()
+  const normalizedUrls: string[] = []
 
   for (const candidateUrl of body.urls) {
     const normalizedUrl = normalizeUrl(String(candidateUrl))
@@ -188,34 +189,69 @@ export async function POST(request: NextRequest) {
       continue
     }
 
+    normalizedUrls.push(normalizedUrl)
+  }
+
+  const uniqueUrls = Array.from(new Set(normalizedUrls))
+
+  if (uniqueUrls.length === 0) {
+    return NextResponse.json({ results, cached, fetched, errors })
+  }
+
+  const { data: cachedRows, error: cacheLookupError } = await supabase
+    .from('pagespeed_cache')
+    .select('*')
+    .eq('strategy', strategy)
+    .in('url', uniqueUrls)
+    .gte('fetched_at', cutoffIso)
+    .order('fetched_at', { ascending: false })
+
+  if (cacheLookupError) {
+    return NextResponse.json({ error: `Cache lookup failed: ${cacheLookupError.message}` }, { status: 500 })
+  }
+
+  const latestCachedByUrl = new Map<string, PagespeedResult>()
+  for (const row of (cachedRows ?? []) as PagespeedResult[]) {
+    if (!latestCachedByUrl.has(row.url)) {
+      latestCachedByUrl.set(row.url, row)
+    }
+  }
+
+  const urlsToScan: string[] = []
+  for (const url of uniqueUrls) {
+    const cachedRow = latestCachedByUrl.get(url)
+    if (cachedRow) {
+      results.push(cachedRow)
+      cached += 1
+    } else {
+      urlsToScan.push(url)
+    }
+  }
+
+  if (urlsToScan.length > 0) {
+    const { error: bulkDeleteError } = await supabase
+      .from('pagespeed_cache')
+      .delete()
+      .in('url', urlsToScan)
+      .eq('strategy', strategy)
+
+    if (bulkDeleteError) {
+      for (const url of urlsToScan) {
+        errors.push({ url, error: `Failed to clear stale cache rows: ${bulkDeleteError.message}` })
+      }
+      return NextResponse.json({ results, cached, fetched, errors })
+    }
+  }
+
+  for (const url of urlsToScan) {
     try {
-      const { data: cachedRow, error: cacheError } = await supabase
-        .from('pagespeed_cache')
-        .select('*')
-        .eq('url', normalizedUrl)
-        .eq('strategy', strategy)
-        .gte('fetched_at', cutoffIso)
-        .order('fetched_at', { ascending: false })
-        .limit(1)
-        .maybeSingle()
-
-      if (cacheError) {
-        throw new Error(`Cache lookup failed: ${cacheError.message}`)
-      }
-
-      if (cachedRow) {
-        results.push(cachedRow as PagespeedResult)
-        cached += 1
-        continue
-      }
-
       if (apiCallsMade > 0) {
         await sleep(1000)
       }
       apiCallsMade += 1
 
       const params = new URLSearchParams({
-        url: normalizedUrl,
+        url,
         key: googleApiKey,
         strategy,
         category: 'performance',
@@ -231,17 +267,7 @@ export async function POST(request: NextRequest) {
       }
 
       const data = (await response.json()) as PageSpeedApiResponse
-      const insertRow = toInsertRow(normalizedUrl, strategy, data)
-
-      const { error: deleteError } = await supabase
-        .from('pagespeed_cache')
-        .delete()
-        .eq('url', normalizedUrl)
-        .eq('strategy', strategy)
-
-      if (deleteError) {
-        throw new Error(`Failed to clear old cache row: ${deleteError.message}`)
-      }
+      const insertRow = toInsertRow(url, strategy, data)
 
       const { data: insertedRow, error: insertError } = await supabase
         .from('pagespeed_cache')
@@ -257,7 +283,7 @@ export async function POST(request: NextRequest) {
       fetched += 1
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
-      errors.push({ url: normalizedUrl, error: message })
+      errors.push({ url, error: message })
     }
   }
 
@@ -308,5 +334,13 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
-  return NextResponse.json({ results: (data ?? []) as PagespeedResult[] })
+  const fetchedRows = (data ?? []) as PagespeedResult[]
+  const seen = new Set<string>()
+  const dedupedResults = fetchedRows.filter((row) => {
+    if (seen.has(row.url)) return false
+    seen.add(row.url)
+    return true
+  })
+
+  return NextResponse.json({ results: dedupedResults })
 }
