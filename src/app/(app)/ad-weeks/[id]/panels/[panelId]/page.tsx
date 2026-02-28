@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { redirect, notFound } from 'next/navigation'
 import type { Profile } from '@/lib/types/database'
 import { PanelDetailClient } from './panel-detail-client'
+import { PageGuard } from '@/components/page-guard'
 
 export default async function PanelDetailPage({
   params,
@@ -55,13 +56,15 @@ export default async function PanelDetailPage({
   }
 
   return (
-    <PanelDetailClient
-      profile={profile as Profile}
-      panel={panel}
-      producers={producers ?? []}
-      events={events ?? []}
-      adWeekId={params.id}
-      conflicts={conflicts}
-    />
+    <PageGuard pageSlug="ad-weeks">
+      <PanelDetailClient
+        profile={profile as Profile}
+        panel={panel}
+        producers={producers ?? []}
+        events={events ?? []}
+        adWeekId={params.id}
+        conflicts={conflicts}
+      />
+    </PageGuard>
   )
 }

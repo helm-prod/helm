@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import type { Profile } from '@/lib/types/database'
 import { MyQueueClient } from './my-queue-client'
+import { PageGuard } from '@/components/page-guard'
 
 function toIsoDateUTC(date: Date) {
   const year = date.getUTCFullYear()
@@ -52,11 +53,13 @@ export default async function MyQueuePage() {
   nextWeekDate.setUTCDate(now.getUTCDate() + 7)
 
   return (
-    <MyQueueClient
-      profile={profile as Profile}
-      panels={panels ?? []}
-      todayIso={toIsoDateUTC(now)}
-      nextWeekIso={toIsoDateUTC(nextWeekDate)}
-    />
+    <PageGuard pageSlug="my-queue">
+      <MyQueueClient
+        profile={profile as Profile}
+        panels={panels ?? []}
+        todayIso={toIsoDateUTC(now)}
+        nextWeekIso={toIsoDateUTC(nextWeekDate)}
+      />
+    </PageGuard>
   )
 }

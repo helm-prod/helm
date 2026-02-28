@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { EditorWorkspace } from '@/components/editor/editor-workspace'
+import { PageGuard } from '@/components/page-guard'
 import type { Profile, EditorFile, EditorFolder, EditorTeamFolder } from '@/lib/types/database'
 
 export default async function EditorPage() {
@@ -45,13 +46,15 @@ export default async function EditorPage() {
   ])
 
   return (
-    <EditorWorkspace
-      currentUser={profile as Profile}
-      profiles={(profilesRes.data ?? []) as Profile[]}
-      initialFiles={(filesRes.data ?? []) as EditorFile[]}
-      initialFolders={(foldersRes.data ?? []) as EditorFolder[]}
-      initialTeamFiles={(teamFilesRes.data ?? []) as EditorFile[]}
-      initialTeamFolders={(teamFoldersRes.data ?? []) as EditorTeamFolder[]}
-    />
+    <PageGuard pageSlug="editor">
+      <EditorWorkspace
+        currentUser={profile as Profile}
+        profiles={(profilesRes.data ?? []) as Profile[]}
+        initialFiles={(filesRes.data ?? []) as EditorFile[]}
+        initialFolders={(foldersRes.data ?? []) as EditorFolder[]}
+        initialTeamFiles={(teamFilesRes.data ?? []) as EditorFile[]}
+        initialTeamFolders={(teamFoldersRes.data ?? []) as EditorTeamFolder[]}
+      />
+    </PageGuard>
   )
 }

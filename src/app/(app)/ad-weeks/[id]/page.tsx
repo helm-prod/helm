@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { redirect, notFound } from 'next/navigation'
 import type { Profile } from '@/lib/types/database'
 import { AdWeekDetailClient } from './ad-week-detail-client'
+import { PageGuard } from '@/components/page-guard'
 
 export default async function AdWeekDetailPage({
   params,
@@ -54,13 +55,15 @@ export default async function AdWeekDetailPage({
     .select('producer_id, category')
 
   return (
-    <AdWeekDetailClient
-      profile={profile as Profile}
-      adWeek={adWeek}
-      events={events ?? []}
-      panels={panels ?? []}
-      producers={producers ?? []}
-      aorAssignments={aorAssignments ?? []}
-    />
+    <PageGuard pageSlug="ad-weeks">
+      <AdWeekDetailClient
+        profile={profile as Profile}
+        adWeek={adWeek}
+        events={events ?? []}
+        panels={panels ?? []}
+        producers={producers ?? []}
+        aorAssignments={aorAssignments ?? []}
+      />
+    </PageGuard>
   )
 }

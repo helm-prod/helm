@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { redirect, notFound } from 'next/navigation'
 import type { Profile, WorkRequest } from '@/lib/types/database'
 import { RequestDetailClient } from './request-detail-client'
+import { PageGuard } from '@/components/page-guard'
 
 export default async function RequestDetailPage({
   params,
@@ -40,10 +41,12 @@ export default async function RequestDetailPage({
     .order('full_name')
 
   return (
-    <RequestDetailClient
-      request={request as WorkRequest & { requester: Profile; assignee: Profile | null }}
-      profile={profile as Profile}
-      producers={producers ?? []}
-    />
+    <PageGuard pageSlug="requests">
+      <RequestDetailClient
+        request={request as WorkRequest & { requester: Profile; assignee: Profile | null }}
+        profile={profile as Profile}
+        producers={producers ?? []}
+      />
+    </PageGuard>
   )
 }

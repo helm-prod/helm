@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import type { Profile, SopDocument, SopStatus } from '@/lib/types/database'
 import { SOP_STATUS_LABELS } from '@/lib/types/database'
+import { PageGuard } from '@/components/page-guard'
 
 export default async function SOPsPage() {
   const supabase = createClient()
@@ -39,7 +40,8 @@ export default async function SOPsPage() {
   }
 
   return (
-    <div className="max-w-4xl">
+    <PageGuard pageSlug="sops">
+      <div className="max-w-4xl">
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-white">
@@ -143,6 +145,7 @@ export default async function SOPsPage() {
           })}
         </div>
       )}
-    </div>
+      </div>
+    </PageGuard>
   )
 }

@@ -4,6 +4,7 @@ import Link from 'next/link'
 import type { Profile, AdWeekStatus } from '@/lib/types/database'
 import { AD_WEEK_STATUS_LABELS, AD_WEEK_STATUS_COLORS } from '@/lib/types/database'
 import { AdWeekCreateButton } from './ad-weeks-client'
+import { PageGuard } from '@/components/page-guard'
 
 export default async function AdWeeksPage() {
   const supabase = createClient()
@@ -45,7 +46,8 @@ export default async function AdWeeksPage() {
   }
 
   return (
-    <div className="max-w-6xl">
+    <PageGuard pageSlug="ad-weeks">
+      <div className="max-w-6xl">
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-white">Ad Weeks</h1>
@@ -159,6 +161,7 @@ export default async function AdWeeksPage() {
           </div>
         )}
       </div>
-    </div>
+      </div>
+    </PageGuard>
   )
 }

@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import type { Profile } from '@/lib/types/database'
 import { RequestsListClient } from './requests-list-client'
+import { PageGuard } from '@/components/page-guard'
 
 export default async function RequestsPage() {
   const supabase = createClient()
@@ -26,9 +27,11 @@ export default async function RequestsPage() {
     .order('full_name')
 
   return (
-    <RequestsListClient
-      profile={profile as Profile}
-      producers={producers ?? []}
-    />
+    <PageGuard pageSlug="requests">
+      <RequestsListClient
+        profile={profile as Profile}
+        producers={producers ?? []}
+      />
+    </PageGuard>
   )
 }

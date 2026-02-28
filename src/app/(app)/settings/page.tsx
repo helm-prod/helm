@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import type { Profile } from '@/lib/types/database'
+import { PageGuard } from '@/components/page-guard'
 
 export default async function SettingsPage() {
   const supabase = createClient()
@@ -15,9 +16,7 @@ export default async function SettingsPage() {
     .eq('id', user.id)
     .single()
 
-  if (!profile || (profile as Profile).role !== 'admin') {
-    redirect('/dashboard')
-  }
+  if (!profile) redirect('/login')
 
   const { data: users } = await supabase
     .from('profiles')
@@ -25,7 +24,8 @@ export default async function SettingsPage() {
     .order('created_at', { ascending: true })
 
   return (
-    <div className="max-w-4xl">
+    <PageGuard pageSlug="settings">
+      <div className="max-w-4xl">
       <h1 className="text-2xl font-bold text-white mb-2">Settings</h1>
       <p className="text-brand-400 mb-8">
         Admin settings and user management.
@@ -72,6 +72,7 @@ export default async function SettingsPage() {
           </table>
         </div>
       </div>
-    </div>
+      </div>
+    </PageGuard>
   )
 }

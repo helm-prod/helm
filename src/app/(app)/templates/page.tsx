@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import type { Profile } from '@/lib/types/database'
 import { TemplatesClient } from './templates-client'
+import { PageGuard } from '@/components/page-guard'
 
 export default async function TemplatesPage() {
   const supabase = createClient()
@@ -17,9 +17,7 @@ export default async function TemplatesPage() {
     .eq('id', user.id)
     .single()
 
-  if (!profile || (profile as Profile).role !== 'admin') {
-    redirect('/dashboard')
-  }
+  if (!profile) redirect('/login')
 
   const [pageTemplatesRes, codeTemplatesRes] = await Promise.all([
     supabase.from('page_templates').select('*').order('name'),
@@ -27,9 +25,11 @@ export default async function TemplatesPage() {
   ])
 
   return (
-    <TemplatesClient
-      pageTemplates={(pageTemplatesRes.data as Array<Record<string, unknown>>) ?? []}
-      codeTemplates={(codeTemplatesRes.data as Array<Record<string, unknown>>) ?? []}
-    />
+    <PageGuard pageSlug="templates">
+      <TemplatesClient
+        pageTemplates={(pageTemplatesRes.data as Array<Record<string, unknown>>) ?? []}
+        codeTemplates={(codeTemplatesRes.data as Array<Record<string, unknown>>) ?? []}
+      />
+    </PageGuard>
   )
 }

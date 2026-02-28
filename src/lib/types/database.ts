@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'producer' | 'requester' | 'readonly'
+export type UserRole = 'admin' | 'producer'
 
 export type RequestType =
   | 'new_panel'
@@ -25,6 +25,24 @@ export interface Profile {
   full_name: string
   role: UserRole
   created_at: string
+}
+
+export interface PageAccess {
+  id: string
+  page_slug: string
+  role: UserRole
+  is_enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface UserPreferences {
+  id: string
+  user_id: string
+  theme: 'light' | 'dark' | 'system'
+  email_notifications: boolean
+  created_at: string
+  updated_at: string
 }
 
 export interface StatusHistoryEntry {

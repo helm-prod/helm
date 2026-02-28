@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { PriorityBadge } from '@/components/priority-badge'
 import { StaticStatusBadge } from '@/components/status-badge'
+import { PageGuard } from '@/components/page-guard'
 import {
   type Profile,
   REQUEST_TYPE_LABELS,
@@ -114,7 +115,8 @@ export default async function DashboardPage() {
   })[]
 
   return (
-    <div className="mx-auto max-w-6xl space-y-8">
+    <PageGuard pageSlug="dashboard">
+      <div className="mx-auto max-w-6xl space-y-8">
       <div>
         <h1 className="text-2xl font-bold text-white">Dashboard</h1>
         <p className="mt-1 text-brand-400">Production health, weekly focus, and incoming ad-hoc requests.</p>
@@ -237,6 +239,7 @@ export default async function DashboardPage() {
           </div>
         )}
       </section>
-    </div>
+      </div>
+    </PageGuard>
   )
 }

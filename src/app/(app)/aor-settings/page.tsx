@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
-import type { Profile } from '@/lib/types/database'
 import { AorSettingsClient } from './aor-settings-client'
+import { PageGuard } from '@/components/page-guard'
 
 export default async function AorSettingsPage() {
   const supabase = createClient()
@@ -16,9 +16,7 @@ export default async function AorSettingsPage() {
     .eq('id', user.id)
     .single()
 
-  if (!profile || (profile as Profile).role !== 'admin') {
-    redirect('/dashboard')
-  }
+  if (!profile) redirect('/login')
 
   const { data: assignments } = await supabase
     .from('aor_assignments')
@@ -32,9 +30,11 @@ export default async function AorSettingsPage() {
     .order('full_name')
 
   return (
-    <AorSettingsClient
-      assignments={assignments ?? []}
-      producers={producers ?? []}
-    />
+    <PageGuard pageSlug="aor-settings">
+      <AorSettingsClient
+        assignments={assignments ?? []}
+        producers={producers ?? []}
+      />
+    </PageGuard>
   )
 }

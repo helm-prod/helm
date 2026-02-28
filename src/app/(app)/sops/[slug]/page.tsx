@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { redirect, notFound } from 'next/navigation'
 import type { Profile } from '@/lib/types/database'
 import { SopDetailClient } from './sop-detail-client'
+import { PageGuard } from '@/components/page-guard'
 
 export default async function SOPDetailPage({
   params,
@@ -42,10 +43,12 @@ export default async function SOPDetailPage({
   const ackedVersion = ack?.[0]?.version_acknowledged ?? 0
 
   return (
-    <SopDetailClient
-      profile={profile as Profile}
-      sop={sop}
-      ackedVersion={ackedVersion}
-    />
+    <PageGuard pageSlug="sops">
+      <SopDetailClient
+        profile={profile as Profile}
+        sop={sop}
+        ackedVersion={ackedVersion}
+      />
+    </PageGuard>
   )
 }

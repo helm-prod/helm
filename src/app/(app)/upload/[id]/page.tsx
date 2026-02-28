@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound, redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
+import { PageGuard } from '@/components/page-guard'
 
 interface UploadSummary {
   rows_skipped_empty?: number
@@ -101,7 +102,8 @@ export default async function UploadResultPage({ params }: { params: { id: strin
   const rowsSkipped = summary.rows_skipped_empty ?? 0
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <PageGuard pageSlug="upload">
+      <div className="mx-auto max-w-5xl space-y-6">
       <div className="rounded-2xl border border-brand-800 bg-brand-900 p-6">
         <p className="text-sm text-brand-400">Import Results</p>
         <h1 className="mt-1 text-2xl font-bold text-white">
@@ -299,7 +301,8 @@ export default async function UploadResultPage({ params }: { params: { id: strin
           </div>
         </div>
       )}
-    </div>
+      </div>
+    </PageGuard>
   )
 }
 
