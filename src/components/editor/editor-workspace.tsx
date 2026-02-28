@@ -6,7 +6,7 @@ import { CodeEditor } from './code-editor'
 import { LivePreview, composeDocument, type PreviewCompanionFile } from './live-preview'
 import { FileSidebar } from './file-sidebar'
 import { AiPrompt } from './ai-prompt'
-import type { EditorFile, EditorFolder, EditorFileVersion, EditorLanguage, FileVisibility, Profile } from '@/lib/types/database'
+import type { EditorFile, EditorFolder, EditorTeamFolder, EditorFileVersion, EditorLanguage, FileVisibility, Profile } from '@/lib/types/database'
 
 interface EditorWorkspaceProps {
   currentUser: Profile
@@ -14,6 +14,7 @@ interface EditorWorkspaceProps {
   initialFiles: EditorFile[]
   initialFolders: EditorFolder[]
   initialTeamFiles: EditorFile[]
+  initialTeamFolders: EditorTeamFolder[]
 }
 
 type SaveStatus = 'saved' | 'unsaved' | 'saving' | 'error'
@@ -24,11 +25,12 @@ const DEFAULT_CONTENT: Record<EditorLanguage, string> = {
   javascript: '// Start writing JavaScript\nconsole.log("Hello from Helm editor!");',
 }
 
-export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFolders, initialTeamFiles }: EditorWorkspaceProps) {
+export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFolders, initialTeamFiles, initialTeamFolders }: EditorWorkspaceProps) {
   const supabase = createClient()
   const [files, setFiles] = useState<EditorFile[]>(initialFiles)
   const [folders, setFolders] = useState<EditorFolder[]>(initialFolders)
   const [teamFiles, setTeamFiles] = useState<EditorFile[]>(initialTeamFiles)
+  const [teamFolders, setTeamFolders] = useState<EditorTeamFolder[]>(initialTeamFolders)
   const [activeFile, setActiveFile] = useState<EditorFile | null>(null)
   const [editorContent, setEditorContent] = useState('')
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved')
@@ -126,6 +128,12 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
     setFolders((prev) => [...prev, data as EditorFolder])
   }, [currentUser.id, folders.length, supabase])
 
+  const createTeamFolder = useCallback(async (name: string) => {
+    const { data, error } = await supabase.from('editor_team_folders').insert({ name, created_by: currentUser.id, sort_order: teamFolders.length }).select().single()
+    if (error || !data) return
+    setTeamFolders((prev) => [...prev, data as EditorTeamFolder])
+  }, [currentUser.id, supabase, teamFolders.length])
+
   const renameFile = useCallback(async (fileId: string, title: string) => {
     await supabase.from('editor_files').update({ title }).eq('id', fileId)
     setFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, title } : f)))
@@ -143,6 +151,11 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
     setFolders((prev) => prev.map((f) => (f.id === folderId ? { ...f, name } : f)))
   }, [supabase])
 
+  const renameTeamFolder = useCallback(async (folderId: string, name: string) => {
+    await supabase.from('editor_team_folders').update({ name }).eq('id', folderId)
+    setTeamFolders((prev) => prev.map((f) => (f.id === folderId ? { ...f, name } : f)))
+  }, [supabase])
+
   const deleteFolder = useCallback(async (folderId: string) => {
     await supabase.from('editor_files').update({ folder_id: null }).eq('folder_id', folderId)
     await supabase.from('editor_folders').delete().eq('id', folderId)
@@ -150,9 +163,25 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
     setFolders((prev) => prev.filter((f) => f.id !== folderId))
   }, [supabase])
 
+  const deleteTeamFolder = useCallback(async (folderId: string) => {
+    await supabase.from('editor_files').update({ team_folder_id: null }).eq('team_folder_id', folderId)
+    await supabase.from('editor_team_folders').delete().eq('id', folderId)
+    setFiles((prev) => prev.map((f) => (f.team_folder_id === folderId ? { ...f, team_folder_id: null } : f)))
+    setTeamFiles((prev) => prev.map((f) => (f.team_folder_id === folderId ? { ...f, team_folder_id: null } : f)))
+    setTeamFolders((prev) => prev.filter((f) => f.id !== folderId))
+    setActiveFile((prev) => prev && prev.team_folder_id === folderId ? { ...prev, team_folder_id: null } : prev)
+  }, [supabase])
+
   const moveFile = useCallback(async (fileId: string, folderId: string | null) => {
     await supabase.from('editor_files').update({ folder_id: folderId }).eq('id', fileId)
     setFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, folder_id: folderId } : f)))
+  }, [supabase])
+
+  const moveFileToTeamFolder = useCallback(async (fileId: string, teamFolderId: string | null) => {
+    await supabase.from('editor_files').update({ team_folder_id: teamFolderId }).eq('id', fileId)
+    setFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, team_folder_id: teamFolderId } : f)))
+    setTeamFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, team_folder_id: teamFolderId } : f)))
+    setActiveFile((prev) => prev && prev.id === fileId ? { ...prev, team_folder_id: teamFolderId } : prev)
   }, [supabase])
 
   const changeLanguage = useCallback(async (lang: EditorLanguage) => {
@@ -288,9 +317,10 @@ export function EditorWorkspace({ currentUser, profiles, initialFiles, initialFo
   return (
     <div className="flex h-screen overflow-hidden -m-8">
       <div style={{ width: sidebarWidth, minWidth: sidebarWidth }}>
-        <FileSidebar files={files} folders={folders} teamFiles={teamFiles} activeFileId={activeFile?.id ?? null} currentUserId={currentUser.id} profiles={profiles}
+        <FileSidebar files={files} folders={folders} teamFiles={teamFiles} teamFolders={teamFolders} activeFileId={activeFile?.id ?? null} currentUserId={currentUser.id} profiles={profiles}
           onSelectFile={selectFile} onCreateFile={createFile} onCreateFolder={createFolder} onRenameFile={renameFile} onDeleteFile={deleteFile}
-          onRenameFolder={renameFolder} onDeleteFolder={deleteFolder} onMoveFile={moveFile} />
+          onRenameFolder={renameFolder} onDeleteFolder={deleteFolder} onMoveFile={moveFile}
+          onCreateTeamFolder={createTeamFolder} onRenameTeamFolder={renameTeamFolder} onDeleteTeamFolder={deleteTeamFolder} onMoveFileToTeamFolder={moveFileToTeamFolder} />
       </div>
       <div onMouseDown={handleSidebarDragStart} className="group flex w-1 cursor-col-resize items-center justify-center hover:bg-brand-700/30">
         <div className="h-8 w-0.5 rounded-full bg-brand-700 opacity-0 transition-opacity group-hover:opacity-100" />

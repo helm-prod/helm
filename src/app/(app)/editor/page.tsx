@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { EditorWorkspace } from '@/components/editor/editor-workspace'
-import type { Profile, EditorFile, EditorFolder } from '@/lib/types/database'
+import type { Profile, EditorFile, EditorFolder, EditorTeamFolder } from '@/lib/types/database'
 
 export default async function EditorPage() {
   const supabase = createClient()
@@ -20,7 +20,7 @@ export default async function EditorPage() {
 
   if (!profile) redirect('/login')
 
-  const [filesRes, foldersRes, teamFilesRes, profilesRes] = await Promise.all([
+  const [filesRes, foldersRes, teamFilesRes, teamFoldersRes, profilesRes] = await Promise.all([
     supabase
       .from('editor_files')
       .select('*')
@@ -37,6 +37,10 @@ export default async function EditorPage() {
       .eq('visibility', 'team')
       .neq('user_id', user.id)
       .order('updated_at', { ascending: false }),
+    supabase
+      .from('editor_team_folders')
+      .select('*')
+      .order('sort_order', { ascending: true }),
     supabase.from('profiles').select('*'),
   ])
 
@@ -47,6 +51,7 @@ export default async function EditorPage() {
       initialFiles={(filesRes.data ?? []) as EditorFile[]}
       initialFolders={(foldersRes.data ?? []) as EditorFolder[]}
       initialTeamFiles={(teamFilesRes.data ?? []) as EditorFile[]}
+      initialTeamFolders={(teamFoldersRes.data ?? []) as EditorTeamFolder[]}
     />
   )
 }

@@ -1,24 +1,32 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import type { EditorFile, EditorFolder, EditorLanguage, Profile } from '@/lib/types/database'
+import type { EditorFile, EditorFolder, EditorTeamFolder, EditorLanguage, Profile } from '@/lib/types/database'
 
 interface FileSidebarProps {
   files: EditorFile[]
   folders: EditorFolder[]
   teamFiles: EditorFile[]
+  teamFolders: EditorTeamFolder[]
   activeFileId: string | null
   currentUserId: string
   profiles: Profile[]
   onSelectFile: (file: EditorFile) => void
   onCreateFile: (folderId: string | null) => void
   onCreateFolder: (name: string) => void
+  onCreateTeamFolder: (name: string) => void
   onRenameFile: (fileId: string, title: string) => void
   onDeleteFile: (fileId: string) => void
   onRenameFolder: (folderId: string, name: string) => void
   onDeleteFolder: (folderId: string) => void
+  onRenameTeamFolder: (folderId: string, name: string) => void
+  onDeleteTeamFolder: (folderId: string) => void
   onMoveFile: (fileId: string, folderId: string | null) => void
+  onMoveFileToTeamFolder: (fileId: string, teamFolderId: string | null) => void
 }
+
+type ContextMenuType = 'file' | 'folder' | 'team-file' | 'team-folder'
+type RenameType = 'file' | 'folder' | 'team-folder'
 
 const LANG_ICONS: Record<EditorLanguage, { color: string; label: string }> = {
   html: { color: 'text-nex-red', label: 'HTML' },
@@ -27,18 +35,23 @@ const LANG_ICONS: Record<EditorLanguage, { color: string; label: string }> = {
 }
 
 export function FileSidebar({
-  files, folders, teamFiles, activeFileId, currentUserId, profiles,
-  onSelectFile, onCreateFile, onCreateFolder, onRenameFile, onDeleteFile,
-  onRenameFolder, onDeleteFolder, onMoveFile,
+  files, folders, teamFiles, teamFolders, activeFileId, currentUserId, profiles,
+  onSelectFile, onCreateFile, onCreateFolder, onCreateTeamFolder, onRenameFile, onDeleteFile,
+  onRenameFolder, onDeleteFolder, onRenameTeamFolder, onDeleteTeamFolder, onMoveFile, onMoveFileToTeamFolder,
 }: FileSidebarProps) {
   const [search, setSearch] = useState('')
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['unfiled']))
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['unfiled', 'team-unfiled']))
   const [showTeamFiles, setShowTeamFiles] = useState(false)
   const [newFolderName, setNewFolderName] = useState('')
   const [isCreatingFolder, setIsCreatingFolder] = useState(false)
+  const [newTeamFolderName, setNewTeamFolderName] = useState('')
+  const [isCreatingTeamFolder, setIsCreatingTeamFolder] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingValue, setEditingValue] = useState('')
-  const [contextMenu, setContextMenu] = useState<{ id: string; type: 'file' | 'folder'; x: number; y: number } | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ id: string; type: ContextMenuType; x: number; y: number } | null>(null)
+
+  const searchQuery = search.trim().toLowerCase()
+  const isSearching = Boolean(searchQuery)
 
   const filesByFolder = useMemo(() => {
     const map: Record<string, EditorFile[]> = { unfiled: [] }
@@ -54,51 +67,92 @@ export function FileSidebar({
     return map
   }, [files, folders])
 
-  const filteredFiles = useMemo(() => {
-    if (!search.trim()) return null
-    const q = search.toLowerCase()
+  const teamFolderNameById = useMemo(() => {
+    const map: Record<string, string> = {}
+    teamFolders.forEach((folder) => { map[folder.id] = folder.name })
+    return map
+  }, [teamFolders])
+
+  const filteredPersonalFiles = useMemo(() => {
+    if (!isSearching) return files
     return files.filter(
-      (f) => f.title.toLowerCase().includes(q) || f.tags.some((t) => t.toLowerCase().includes(q)) || f.language.toLowerCase().includes(q)
+      (file) =>
+        file.title.toLowerCase().includes(searchQuery) ||
+        file.tags.some((tag) => tag.toLowerCase().includes(searchQuery)) ||
+        file.language.toLowerCase().includes(searchQuery)
     )
-  }, [files, search])
+  }, [files, isSearching, searchQuery])
 
   const filteredTeamFiles = useMemo(() => {
-    if (!search.trim()) return teamFiles
-    const q = search.toLowerCase()
-    return teamFiles.filter(
-      (f) => f.title.toLowerCase().includes(q) || f.tags.some((t) => t.toLowerCase().includes(q))
+    if (!isSearching) return teamFiles
+    return teamFiles.filter((file) => {
+      const folderName = file.team_folder_id ? (teamFolderNameById[file.team_folder_id] ?? '') : ''
+      return (
+        file.title.toLowerCase().includes(searchQuery) ||
+        file.tags.some((tag) => tag.toLowerCase().includes(searchQuery)) ||
+        file.language.toLowerCase().includes(searchQuery) ||
+        folderName.toLowerCase().includes(searchQuery)
+      )
+    })
+  }, [isSearching, searchQuery, teamFiles, teamFolderNameById])
+
+  const visibleTeamFolders = useMemo(() => {
+    if (!isSearching) return teamFolders
+    return teamFolders.filter(
+      (folder) =>
+        folder.name.toLowerCase().includes(searchQuery) ||
+        filteredTeamFiles.some((file) => file.team_folder_id === folder.id)
     )
-  }, [teamFiles, search])
+  }, [filteredTeamFiles, isSearching, searchQuery, teamFolders])
+
+  const teamFilesByFolder = useMemo(() => {
+    const map: Record<string, EditorFile[]> = { unfiled: [] }
+    visibleTeamFolders.forEach((folder) => { map[folder.id] = [] })
+    filteredTeamFiles.forEach((file) => {
+      const key = file.team_folder_id ?? 'unfiled'
+      if (!map[key]) map[key] = []
+      map[key].push(file)
+    })
+    Object.values(map).forEach((arr) =>
+      arr.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+    )
+    return map
+  }, [filteredTeamFiles, visibleTeamFolders])
+
+  const isTeamSectionOpen = showTeamFiles || isSearching
 
   function toggleFolder(id: string) {
     setExpandedFolders((prev) => {
       const next = new Set(prev)
-      if (next.has(id)) next.delete(id); else next.add(id)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
       return next
     })
   }
 
-  function handleContextMenu(e: React.MouseEvent, id: string, type: 'file' | 'folder') {
+  function handleContextMenu(e: React.MouseEvent, id: string, type: ContextMenuType) {
     e.preventDefault()
     setContextMenu({ id, type, x: e.clientX, y: e.clientY })
   }
 
-  function startRename(id: string, currentName: string) {
-    setEditingId(id)
+  function startRename(id: string, currentName: string, type: RenameType) {
+    setEditingId(`${type}:${id}`)
     setEditingValue(currentName)
     setContextMenu(null)
   }
 
-  function commitRename(id: string, type: 'file' | 'folder') {
+  function commitRename(id: string, type: RenameType) {
     if (editingValue.trim()) {
       if (type === 'file') onRenameFile(id, editingValue.trim())
-      else onRenameFolder(id, editingValue.trim())
+      else if (type === 'folder') onRenameFolder(id, editingValue.trim())
+      else onRenameTeamFolder(id, editingValue.trim())
     }
     setEditingId(null)
     setEditingValue('')
   }
 
   function getOwnerName(userId: string): string {
+    if (userId === currentUserId) return 'You'
     const p = profiles.find((pr) => pr.id === userId)
     return p?.full_name?.split(' ')[0] ?? 'Unknown'
   }
@@ -120,7 +174,7 @@ export function FileSidebar({
   function renderFileItem(file: EditorFile, isTeam = false) {
     const isActive = file.id === activeFileId
     const langInfo = LANG_ICONS[file.language]
-    const isEditing = editingId === file.id
+    const isEditing = !isTeam && editingId === `file:${file.id}`
     const visibleTags = file.tags.slice(0, 3)
     const extraTagCount = file.tags.length - visibleTags.length
 
@@ -128,7 +182,7 @@ export function FileSidebar({
       <button
         key={file.id}
         onClick={() => onSelectFile(file)}
-        onContextMenu={(e) => !isTeam && handleContextMenu(e, file.id, 'file')}
+        onContextMenu={(e) => handleContextMenu(e, file.id, isTeam ? 'team-file' : 'file')}
         className={`group flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-all duration-150 ${
           isActive
             ? 'bg-brand-800/80 text-white shadow-[inset_2px_0_0_0_#C8102E]'
@@ -137,10 +191,18 @@ export function FileSidebar({
       >
         <span className={`flex-shrink-0 font-mono text-[10px] font-bold ${langInfo.color}`}>{langInfo.label}</span>
         {isEditing ? (
-          <input autoFocus value={editingValue} onChange={(e) => setEditingValue(e.target.value)}
+          <input
+            autoFocus
+            value={editingValue}
+            onChange={(e) => setEditingValue(e.target.value)}
             onBlur={() => commitRename(file.id, 'file')}
-            onKeyDown={(e) => { if (e.key === 'Enter') commitRename(file.id, 'file'); if (e.key === 'Escape') setEditingId(null) }}
-            className="min-w-0 flex-1 bg-transparent text-sm text-white outline-none" onClick={(e) => e.stopPropagation()} />
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitRename(file.id, 'file')
+              if (e.key === 'Escape') setEditingId(null)
+            }}
+            className="min-w-0 flex-1 bg-transparent text-sm text-white outline-none"
+            onClick={(e) => e.stopPropagation()}
+          />
         ) : (
           <div className="min-w-0 flex flex-1 flex-col">
             <div className="truncate">{file.title}</div>
@@ -177,52 +239,81 @@ export function FileSidebar({
         <span className="text-xs font-semibold uppercase tracking-wider text-brand-400">Files</span>
         <button onClick={() => onCreateFile(null)} className="rounded-md bg-nex-red/90 px-2 py-1 text-xs font-medium text-white transition-colors hover:bg-nex-red" title="New file">+ New</button>
       </div>
+
       <div className="border-b border-brand-800/50 px-3 py-2">
         <div className="relative">
           <SearchIcon className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-brand-500" />
-          <input type="text" placeholder="Search files..." value={search} onChange={(e) => setSearch(e.target.value)}
-            className="w-full rounded-md border border-brand-800 bg-brand-900/50 py-1.5 pl-7 pr-2 text-xs text-white placeholder-brand-600 outline-none transition-colors focus:border-brand-600" />
+          <input
+            type="text"
+            placeholder="Search files..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full rounded-md border border-brand-800 bg-brand-900/50 py-1.5 pl-7 pr-2 text-xs text-white placeholder-brand-600 outline-none transition-colors focus:border-brand-600"
+          />
         </div>
       </div>
+
       <div className="flex-1 overflow-y-auto px-2 py-2">
-        {filteredFiles ? (
+        {isSearching ? (
           <div className="space-y-0.5">
-            <p className="px-2 pb-1 text-[10px] font-medium uppercase tracking-wider text-brand-500">{filteredFiles.length} result{filteredFiles.length !== 1 ? 's' : ''}</p>
-            {filteredFiles.map((f) => renderFileItem(f))}
+            <p className="px-2 pb-1 text-[10px] font-medium uppercase tracking-wider text-brand-500">
+              {filteredPersonalFiles.length} personal result{filteredPersonalFiles.length !== 1 ? 's' : ''}
+            </p>
+            {filteredPersonalFiles.length === 0 ? (
+              <p className="px-2 py-1 text-[10px] italic text-brand-600">No personal files found</p>
+            ) : (
+              filteredPersonalFiles.map((file) => renderFileItem(file))
+            )}
           </div>
         ) : (
           <>
             {folders.map((folder) => {
               const folderFiles = filesByFolder[folder.id] ?? []
               const isExpanded = expandedFolders.has(folder.id)
-              const isFolderEditing = editingId === folder.id
+              const isFolderEditing = editingId === `folder:${folder.id}`
               return (
                 <div key={folder.id} className="mb-1">
-                  <button onClick={() => toggleFolder(folder.id)} onContextMenu={(e) => handleContextMenu(e, folder.id, 'folder')}
-                    className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-brand-300 transition-colors hover:bg-brand-800/30 hover:text-white">
+                  <button
+                    onClick={() => toggleFolder(folder.id)}
+                    onContextMenu={(e) => handleContextMenu(e, folder.id, 'folder')}
+                    className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-brand-300 transition-colors hover:bg-brand-800/30 hover:text-white"
+                  >
                     <ChevronIcon className={`h-3 w-3 transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''}`} />
                     <FolderIcon className="h-3.5 w-3.5 text-brand-500" />
                     {isFolderEditing ? (
-                      <input autoFocus value={editingValue} onChange={(e) => setEditingValue(e.target.value)}
+                      <input
+                        autoFocus
+                        value={editingValue}
+                        onChange={(e) => setEditingValue(e.target.value)}
                         onBlur={() => commitRename(folder.id, 'folder')}
-                        onKeyDown={(e) => { if (e.key === 'Enter') commitRename(folder.id, 'folder'); if (e.key === 'Escape') setEditingId(null) }}
-                        className="min-w-0 flex-1 bg-transparent text-xs text-white outline-none" onClick={(e) => e.stopPropagation()} />
-                    ) : (<span className="flex-1 truncate text-left">{folder.name}</span>)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') commitRename(folder.id, 'folder')
+                          if (e.key === 'Escape') setEditingId(null)
+                        }}
+                        className="min-w-0 flex-1 bg-transparent text-xs text-white outline-none"
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    ) : (
+                      <span className="flex-1 truncate text-left">{folder.name}</span>
+                    )}
                     <span className="text-[10px] text-brand-600">{folderFiles.length}</span>
                   </button>
                   {isExpanded && (
                     <div className="ml-3 space-y-0.5 border-l border-brand-800/40 pl-2">
-                      {folderFiles.map((f) => renderFileItem(f))}
+                      {folderFiles.map((file) => renderFileItem(file))}
                       {folderFiles.length === 0 && <p className="px-2 py-1 text-[10px] italic text-brand-600">Empty folder</p>}
                     </div>
                   )}
                 </div>
               )
             })}
+
             {(filesByFolder['unfiled']?.length ?? 0) > 0 && (
               <div className="mb-1">
-                <button onClick={() => toggleFolder('unfiled')}
-                  className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-brand-300 transition-colors hover:bg-brand-800/30 hover:text-white">
+                <button
+                  onClick={() => toggleFolder('unfiled')}
+                  className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-brand-300 transition-colors hover:bg-brand-800/30 hover:text-white"
+                >
                   <ChevronIcon className={`h-3 w-3 transition-transform duration-150 ${expandedFolders.has('unfiled') ? 'rotate-90' : ''}`} />
                   <FolderIcon className="h-3.5 w-3.5 text-brand-600" />
                   <span className="flex-1 text-left">Unfiled</span>
@@ -230,79 +321,247 @@ export function FileSidebar({
                 </button>
                 {expandedFolders.has('unfiled') && (
                   <div className="ml-3 space-y-0.5 border-l border-brand-800/40 pl-2">
-                    {filesByFolder['unfiled'].map((f) => renderFileItem(f))}
+                    {filesByFolder['unfiled'].map((file) => renderFileItem(file))}
                   </div>
                 )}
               </div>
             )}
+
             {isCreatingFolder ? (
               <div className="flex items-center gap-1.5 px-2 py-1.5">
                 <FolderIcon className="h-3.5 w-3.5 text-brand-500" />
-                <input autoFocus value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)} placeholder="Folder name..."
-                  onBlur={() => { if (newFolderName.trim()) onCreateFolder(newFolderName.trim()); setIsCreatingFolder(false); setNewFolderName('') }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && newFolderName.trim()) { onCreateFolder(newFolderName.trim()); setIsCreatingFolder(false); setNewFolderName('') }
-                    if (e.key === 'Escape') { setIsCreatingFolder(false); setNewFolderName('') }
+                <input
+                  autoFocus
+                  value={newFolderName}
+                  onChange={(e) => setNewFolderName(e.target.value)}
+                  placeholder="Folder name..."
+                  onBlur={() => {
+                    if (newFolderName.trim()) onCreateFolder(newFolderName.trim())
+                    setIsCreatingFolder(false)
+                    setNewFolderName('')
                   }}
-                  className="min-w-0 flex-1 bg-transparent text-xs text-white placeholder-brand-600 outline-none" />
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && newFolderName.trim()) {
+                      onCreateFolder(newFolderName.trim())
+                      setIsCreatingFolder(false)
+                      setNewFolderName('')
+                    }
+                    if (e.key === 'Escape') {
+                      setIsCreatingFolder(false)
+                      setNewFolderName('')
+                    }
+                  }}
+                  className="min-w-0 flex-1 bg-transparent text-xs text-white placeholder-brand-600 outline-none"
+                />
               </div>
             ) : (
-              <button onClick={() => setIsCreatingFolder(true)}
-                className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] text-brand-500 transition-colors hover:bg-brand-800/30 hover:text-brand-300">
+              <button
+                onClick={() => setIsCreatingFolder(true)}
+                className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] text-brand-500 transition-colors hover:bg-brand-800/30 hover:text-brand-300"
+              >
                 <PlusSmallIcon className="h-3 w-3" /> New Folder
               </button>
             )}
-            <div className="mt-4 border-t border-brand-800/50 pt-3">
-              <button onClick={() => setShowTeamFiles(!showTeamFiles)}
-                className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-brand-300 transition-colors hover:bg-brand-800/30 hover:text-white">
-                <ChevronIcon className={`h-3 w-3 transition-transform duration-150 ${showTeamFiles ? 'rotate-90' : ''}`} />
-                <TeamIcon className="h-3.5 w-3.5 text-brand-500" />
-                <span className="flex-1 text-left">Team Files</span>
-                <span className="text-[10px] text-brand-600">{filteredTeamFiles.length}</span>
-              </button>
-              {showTeamFiles && (
-                <div className="ml-3 space-y-0.5 border-l border-brand-800/40 pl-2">
-                  {filteredTeamFiles.length === 0 ? (
-                    <p className="px-2 py-1 text-[10px] italic text-brand-600">No shared files yet</p>
-                  ) : (filteredTeamFiles.map((f) => renderFileItem(f, true)))}
-                </div>
-              )}
-            </div>
-            <div className="mt-3 border-t border-brand-800/50 pt-3">
-              <div className="flex items-center gap-1.5 rounded-md px-2 py-1.5 opacity-40">
-                <TemplateIcon className="h-3.5 w-3.5 text-brand-500" />
-                <span className="text-xs text-brand-500">Templates</span>
-                <span className="ml-auto rounded bg-brand-800 px-1.5 py-0.5 text-[9px] font-medium text-brand-500">Coming Soon</span>
-              </div>
-            </div>
           </>
         )}
+
+        <div className="mt-4 border-t border-brand-800/50 pt-3">
+          <button
+            onClick={() => setShowTeamFiles(!showTeamFiles)}
+            className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-brand-300 transition-colors hover:bg-brand-800/30 hover:text-white"
+          >
+            <ChevronIcon className={`h-3 w-3 transition-transform duration-150 ${isTeamSectionOpen ? 'rotate-90' : ''}`} />
+            <TeamIcon className="h-3.5 w-3.5 text-brand-500" />
+            <span className="flex-1 text-left">Team Files</span>
+            <span className="text-[10px] text-brand-600">{filteredTeamFiles.length}</span>
+          </button>
+
+          {isTeamSectionOpen && (
+            <div className="ml-3 space-y-1 border-l border-brand-800/40 pl-2">
+              {(teamFilesByFolder['unfiled']?.length ?? 0) > 0 && (
+                <div className="pt-1">
+                  <p className="px-2 pb-1 text-[10px] uppercase tracking-wider text-brand-600">Unfiled</p>
+                  <div className="space-y-0.5">
+                    {teamFilesByFolder['unfiled'].map((file) => renderFileItem(file, true))}
+                  </div>
+                </div>
+              )}
+
+              {visibleTeamFolders.map((folder) => {
+                const folderFiles = teamFilesByFolder[folder.id] ?? []
+                const expandKey = `team-folder:${folder.id}`
+                const isExpanded = expandedFolders.has(expandKey)
+                const isFolderEditing = editingId === `team-folder:${folder.id}`
+                return (
+                  <div key={folder.id} className="mb-1">
+                    <button
+                      onClick={() => toggleFolder(expandKey)}
+                      onContextMenu={(e) => handleContextMenu(e, folder.id, 'team-folder')}
+                      className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-brand-300 transition-colors hover:bg-brand-800/30 hover:text-white"
+                    >
+                      <ChevronIcon className={`h-3 w-3 transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''}`} />
+                      <TeamIcon className="h-3.5 w-3.5 text-brand-500" />
+                      {isFolderEditing ? (
+                        <input
+                          autoFocus
+                          value={editingValue}
+                          onChange={(e) => setEditingValue(e.target.value)}
+                          onBlur={() => commitRename(folder.id, 'team-folder')}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') commitRename(folder.id, 'team-folder')
+                            if (e.key === 'Escape') setEditingId(null)
+                          }}
+                          className="min-w-0 flex-1 bg-transparent text-xs text-white outline-none"
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      ) : (
+                        <span className="flex-1 truncate text-left">{folder.name}</span>
+                      )}
+                      <span className="text-[10px] text-brand-600">{folderFiles.length}</span>
+                    </button>
+                    {isExpanded && (
+                      <div className="ml-3 space-y-0.5 border-l border-brand-800/40 pl-2">
+                        {folderFiles.map((file) => renderFileItem(file, true))}
+                        {folderFiles.length === 0 && <p className="px-2 py-1 text-[10px] italic text-brand-600">Empty team folder</p>}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+
+              {filteredTeamFiles.length === 0 && visibleTeamFolders.length === 0 && (
+                <p className="px-2 py-1 text-[10px] italic text-brand-600">No shared files yet</p>
+              )}
+
+              {isCreatingTeamFolder ? (
+                <div className="flex items-center gap-1.5 px-2 py-1.5">
+                  <TeamIcon className="h-3.5 w-3.5 text-brand-500" />
+                  <input
+                    autoFocus
+                    value={newTeamFolderName}
+                    onChange={(e) => setNewTeamFolderName(e.target.value)}
+                    placeholder="Team folder name..."
+                    onBlur={() => {
+                      if (newTeamFolderName.trim()) onCreateTeamFolder(newTeamFolderName.trim())
+                      setIsCreatingTeamFolder(false)
+                      setNewTeamFolderName('')
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && newTeamFolderName.trim()) {
+                        onCreateTeamFolder(newTeamFolderName.trim())
+                        setIsCreatingTeamFolder(false)
+                        setNewTeamFolderName('')
+                      }
+                      if (e.key === 'Escape') {
+                        setIsCreatingTeamFolder(false)
+                        setNewTeamFolderName('')
+                      }
+                    }}
+                    className="min-w-0 flex-1 bg-transparent text-xs text-white placeholder-brand-600 outline-none"
+                  />
+                </div>
+              ) : (
+                <button
+                  onClick={() => setIsCreatingTeamFolder(true)}
+                  className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] text-brand-500 transition-colors hover:bg-brand-800/30 hover:text-brand-300"
+                >
+                  <PlusSmallIcon className="h-3 w-3" /> New Team Folder
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="mt-3 border-t border-brand-800/50 pt-3">
+          <div className="flex items-center gap-1.5 rounded-md px-2 py-1.5 opacity-40">
+            <TemplateIcon className="h-3.5 w-3.5 text-brand-500" />
+            <span className="text-xs text-brand-500">Templates</span>
+            <span className="ml-auto rounded bg-brand-800 px-1.5 py-0.5 text-[9px] font-medium text-brand-500">Coming Soon</span>
+          </div>
+        </div>
       </div>
+
       {contextMenu && (
         <>
           <div className="fixed inset-0 z-50" onClick={() => setContextMenu(null)} />
-          <div className="fixed z-50 min-w-[140px] rounded-lg border border-brand-700 bg-brand-900 py-1 shadow-xl"
-            style={{ left: contextMenu.x, top: contextMenu.y }}>
-            <button onClick={() => {
-                const item = contextMenu.type === 'file' ? files.find((f) => f.id === contextMenu.id) : folders.find((f) => f.id === contextMenu.id)
-                if (item) startRename(contextMenu.id, contextMenu.type === 'file' ? (item as EditorFile).title : (item as EditorFolder).name)
-              }}
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-brand-200 hover:bg-brand-800 hover:text-white">Rename</button>
-            {contextMenu.type === 'file' && folders.length > 0 && (
+          <div className="fixed z-50 min-w-[140px] rounded-lg border border-brand-700 bg-brand-900 py-1 shadow-xl" style={{ left: contextMenu.x, top: contextMenu.y }}>
+            {(contextMenu.type === 'file' || contextMenu.type === 'folder' || contextMenu.type === 'team-folder') && (
+              <button
+                onClick={() => {
+                  if (contextMenu.type === 'file') {
+                    const item = files.find((f) => f.id === contextMenu.id)
+                    if (item) startRename(contextMenu.id, item.title, 'file')
+                  } else if (contextMenu.type === 'folder') {
+                    const item = folders.find((f) => f.id === contextMenu.id)
+                    if (item) startRename(contextMenu.id, item.name, 'folder')
+                  } else {
+                    const item = teamFolders.find((f) => f.id === contextMenu.id)
+                    if (item) startRename(contextMenu.id, item.name, 'team-folder')
+                  }
+                }}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-brand-200 hover:bg-brand-800 hover:text-white"
+              >
+                Rename
+              </button>
+            )}
+
+            {contextMenu.type === 'file' && (
               <div className="border-t border-brand-800 py-1">
                 <p className="px-3 py-1 text-[10px] font-medium uppercase text-brand-500">Move to</p>
-                <button onClick={() => { onMoveFile(contextMenu.id, null); setContextMenu(null) }}
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-brand-200 hover:bg-brand-800 hover:text-white">Unfiled</button>
-                {folders.map((f) => (
-                  <button key={f.id} onClick={() => { onMoveFile(contextMenu.id, f.id); setContextMenu(null) }}
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-brand-200 hover:bg-brand-800 hover:text-white">{f.name}</button>
+                <button
+                  onClick={() => { onMoveFile(contextMenu.id, null); setContextMenu(null) }}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-brand-200 hover:bg-brand-800 hover:text-white"
+                >
+                  Unfiled
+                </button>
+                {folders.map((folder) => (
+                  <button
+                    key={folder.id}
+                    onClick={() => { onMoveFile(contextMenu.id, folder.id); setContextMenu(null) }}
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-brand-200 hover:bg-brand-800 hover:text-white"
+                  >
+                    {folder.name}
+                  </button>
                 ))}
               </div>
             )}
-            <div className="border-t border-brand-800">
-              <button onClick={() => { if (contextMenu.type === 'file') onDeleteFile(contextMenu.id); else onDeleteFolder(contextMenu.id); setContextMenu(null) }}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/10 hover:text-red-300">Delete</button>
-            </div>
+
+            {contextMenu.type === 'team-file' && (
+              <div className="border-t border-brand-800 py-1">
+                <p className="px-3 py-1 text-[10px] font-medium uppercase text-brand-500">Move to</p>
+                <button
+                  onClick={() => { onMoveFileToTeamFolder(contextMenu.id, null); setContextMenu(null) }}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-brand-200 hover:bg-brand-800 hover:text-white"
+                >
+                  Unfiled
+                </button>
+                {teamFolders.map((folder) => (
+                  <button
+                    key={folder.id}
+                    onClick={() => { onMoveFileToTeamFolder(contextMenu.id, folder.id); setContextMenu(null) }}
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-brand-200 hover:bg-brand-800 hover:text-white"
+                  >
+                    {folder.name}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {(contextMenu.type === 'file' || contextMenu.type === 'folder' || contextMenu.type === 'team-folder') && (
+              <div className="border-t border-brand-800">
+                <button
+                  onClick={() => {
+                    if (contextMenu.type === 'file') onDeleteFile(contextMenu.id)
+                    else if (contextMenu.type === 'folder') onDeleteFolder(contextMenu.id)
+                    else onDeleteTeamFolder(contextMenu.id)
+                    setContextMenu(null)
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/10 hover:text-red-300"
+                >
+                  Delete
+                </button>
+              </div>
+            )}
           </div>
         </>
       )}

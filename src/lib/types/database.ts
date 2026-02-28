@@ -441,10 +441,20 @@ export interface EditorFolder {
   updated_at: string
 }
 
+export interface EditorTeamFolder {
+  id: string
+  name: string
+  created_by: string | null
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
 export interface EditorFile {
   id: string
   user_id: string
   folder_id: string | null
+  team_folder_id: string | null
   title: string
   language: EditorLanguage
   content: string
