@@ -1,8 +1,9 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
+import { Activity, BarChart3, ChevronDown, ChevronRight, Gauge } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { getEffectiveAccess, getUserRole } from '@/lib/permissions'
 import { NAV_ITEMS, formatRoleName } from '@/lib/nav-config'
@@ -27,12 +28,30 @@ const ICON_MAP: Record<string, IconComponent> = {
   Lock: LockIcon,
 }
 
+const ANALYTICS_NAV_ITEMS = [
+  {
+    slug: 'analytics-performance',
+    label: 'Site Performance',
+    href: '/analytics/performance',
+    Icon: Activity,
+  },
+  {
+    slug: 'analytics-speed',
+    label: 'Site Speed',
+    href: '/analytics/speed',
+    Icon: Gauge,
+  },
+] as const
+
+const ANALYTICS_SLUGS = new Set<string>(ANALYTICS_NAV_ITEMS.map((item) => item.slug))
+
 export function Sidebar({ profile, myQueueCount }: { profile: Profile; myQueueCount: number }) {
   const pathname = usePathname()
   const router = useRouter()
   const supabase = useMemo(() => createClient(), [])
 
   const [role, setRole] = useState<UserRole>(profile.role)
+  const [isAnalyticsExpanded, setIsAnalyticsExpanded] = useState(true)
   const [accessibleSlugs, setAccessibleSlugs] = useState<Set<string>>(
     () => new Set(profile.role === 'admin' ? NAV_ITEMS.map((item) => item.slug) : []),
   )
@@ -70,7 +89,15 @@ export function Sidebar({ profile, myQueueCount }: { profile: Profile; myQueueCo
 
   const roleLabel = formatRoleName(role)
 
-  const navItems = NAV_ITEMS.filter((item) => !(item.adminOnly && role !== 'admin'))
+  const navItems = NAV_ITEMS.filter(
+    (item) => !ANALYTICS_SLUGS.has(item.slug) && !(item.adminOnly && role !== 'admin')
+  )
+  const isAnalyticsRoute = pathname.startsWith('/analytics/')
+  const analyticsHeaderClass = `group flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-sm font-medium transition-colors ${
+    isAnalyticsRoute
+      ? 'border-brand-700 bg-nex-navyLight/70 text-white shadow-[inset_4px_0_0_0_#C8102E]'
+      : 'border-transparent text-brand-100 hover:border-brand-700 hover:bg-brand-800/70 hover:text-white'
+  }`
 
   return (
     <aside className="fixed left-0 top-0 flex h-screen w-64 flex-col border-r border-brand-800 bg-nex-navy">
@@ -91,40 +118,33 @@ export function Sidebar({ profile, myQueueCount }: { profile: Profile; myQueueCo
           const isActive =
             pathname === href || (href !== '/dashboard' && pathname.startsWith(`${href}/`))
           const hasAccess = accessibleSlugs.has(item.slug)
+          const shouldRenderAnalytics = item.slug === 'aor-settings'
+          const navItemClass = `group flex items-center justify-between rounded-xl border px-3 py-2.5 text-sm font-medium transition-colors ${
+            isActive
+              ? 'border-brand-700 bg-nex-navyLight/70 text-white shadow-[inset_4px_0_0_0_#C8102E]'
+              : 'border-transparent text-brand-100 hover:border-brand-700 hover:bg-brand-800/70 hover:text-white'
+          }`
 
-          if (!hasAccess) {
-            return (
-              <div
-                key={item.slug}
-                title="You don't currently have access"
-                className="flex cursor-default items-center justify-between rounded-xl border border-transparent px-3 py-2.5 text-sm font-medium text-brand-100 opacity-40"
-              >
-                <span className="flex items-center gap-3">
-                  <Icon className="h-5 w-5 shrink-0" />
-                  <span className="flex items-center gap-2">
-                    {item.label}
-                    <LockIcon className="h-3.5 w-3.5" />
-                  </span>
-                </span>
-                {item.slug === 'my-queue' && myQueueCount > 0 && (
-                  <span className="inline-flex min-w-6 items-center justify-center rounded-full bg-nex-red px-2 py-0.5 text-xs font-semibold text-white">
-                    {myQueueCount}
-                  </span>
-                )}
-              </div>
-            )
-          }
-
-          return (
-            <Link
-              key={item.slug}
-              href={href}
-              className={`group flex items-center justify-between rounded-xl border px-3 py-2.5 text-sm font-medium transition-colors ${
-                isActive
-                  ? 'border-brand-700 bg-nex-navyLight/70 text-white shadow-[inset_4px_0_0_0_#C8102E]'
-                  : 'border-transparent text-brand-100 hover:border-brand-700 hover:bg-brand-800/70 hover:text-white'
-              }`}
+          const itemNode = !hasAccess ? (
+            <div
+              title="You don't currently have access"
+              className="flex cursor-default items-center justify-between rounded-xl border border-transparent px-3 py-2.5 text-sm font-medium text-brand-100 opacity-40"
             >
+              <span className="flex items-center gap-3">
+                <Icon className="h-5 w-5 shrink-0" />
+                <span className="flex items-center gap-2">
+                  {item.label}
+                  <LockIcon className="h-3.5 w-3.5" />
+                </span>
+              </span>
+              {item.slug === 'my-queue' && myQueueCount > 0 && (
+                <span className="inline-flex min-w-6 items-center justify-center rounded-full bg-nex-red px-2 py-0.5 text-xs font-semibold text-white">
+                  {myQueueCount}
+                </span>
+              )}
+            </div>
+          ) : (
+            <Link href={href} className={navItemClass}>
               <span className="flex items-center gap-3">
                 <Icon className="h-5 w-5 shrink-0" />
                 {item.label}
@@ -135,6 +155,75 @@ export function Sidebar({ profile, myQueueCount }: { profile: Profile; myQueueCo
                 </span>
               )}
             </Link>
+          )
+
+          return (
+            <Fragment key={item.slug}>
+              {itemNode}
+              {shouldRenderAnalytics && (
+                <div className="space-y-1">
+                  <button
+                    type="button"
+                    onClick={() => setIsAnalyticsExpanded((prev) => !prev)}
+                    className={analyticsHeaderClass}
+                  >
+                    <span className="flex items-center gap-3">
+                      <BarChart3 className="h-5 w-5 shrink-0" />
+                      Analytics
+                    </span>
+                    {isAnalyticsExpanded ? (
+                      <ChevronDown className="h-4 w-4 shrink-0" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4 shrink-0" />
+                    )}
+                  </button>
+
+                  {isAnalyticsExpanded && (
+                    <div className="space-y-1">
+                      {ANALYTICS_NAV_ITEMS.map((analyticsItem) => {
+                        const subItemActive =
+                          pathname === analyticsItem.href ||
+                          pathname.startsWith(`${analyticsItem.href}/`)
+                        const subItemAccessible = accessibleSlugs.has(analyticsItem.slug)
+                        const SubItemIcon = analyticsItem.Icon
+                        const subItemClass = `group flex items-center rounded-xl border px-3 py-2.5 pl-10 text-sm font-medium transition-colors ${
+                          subItemActive
+                            ? 'border-brand-700 bg-nex-navyLight/70 text-white shadow-[inset_4px_0_0_0_#C8102E]'
+                            : 'border-transparent text-brand-100 hover:border-brand-700 hover:bg-brand-800/70 hover:text-white'
+                        }`
+
+                        if (!subItemAccessible) {
+                          return (
+                            <div
+                              key={analyticsItem.slug}
+                              title="You don't currently have access"
+                              className="flex cursor-default items-center rounded-xl border border-transparent px-3 py-2.5 pl-10 text-sm font-medium text-brand-100 opacity-40"
+                            >
+                              <span className="flex items-center gap-3">
+                                <SubItemIcon className="h-5 w-5 shrink-0" />
+                                <span className="flex items-center gap-2">
+                                  {analyticsItem.label}
+                                  <LockIcon className="h-3.5 w-3.5" />
+                                </span>
+                              </span>
+                            </div>
+                          )
+                        }
+
+                        return (
+                          <Link key={analyticsItem.slug} href={analyticsItem.href} className={subItemClass}>
+                            <span className="flex items-center gap-3">
+                              <SubItemIcon className="h-5 w-5 shrink-0" />
+                              {analyticsItem.label}
+                            </span>
+                          </Link>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </Fragment>
           )
         })}
       </nav>
