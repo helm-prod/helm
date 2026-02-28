@@ -5,6 +5,11 @@ export type NavItem = {
   adminOnly?: boolean
 }
 
+export type RoleDefinition = {
+  value: 'admin' | 'senior_web_producer' | 'producer'
+  label: string
+}
+
 export const NAV_ITEMS: NavItem[] = [
   { slug: 'dashboard', label: 'Dashboard', icon: 'LayoutDashboard' },
   { slug: 'my-queue', label: 'My Queue', icon: 'ListTodo' },
@@ -20,6 +25,14 @@ export const NAV_ITEMS: NavItem[] = [
   { slug: 'profile', label: 'Profile', icon: 'User' },
   { slug: 'admin', label: 'Admin', icon: 'Shield', adminOnly: true },
 ]
+
+export const ROLES: RoleDefinition[] = [
+  { value: 'admin', label: 'Admin' },
+  { value: 'senior_web_producer', label: 'Senior Web Producer' },
+  { value: 'producer', label: 'Producer' },
+]
+
+export const NON_ADMIN_ROLES = ROLES.filter((role) => role.value !== 'admin')
 
 export function getNavItem(slug: string) {
   return NAV_ITEMS.find((item) => item.slug === slug)

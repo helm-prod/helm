@@ -27,7 +27,10 @@ interface Props {
 export function RequestDetailClient({ request: initial, profile, producers }: Props) {
   const router = useRouter()
   const supabase = createClient()
-  const canEdit = profile.role === 'admin' || profile.role === 'producer'
+  const canEdit =
+    profile.role === 'admin' ||
+    profile.role === 'producer' ||
+    profile.role === 'senior_web_producer'
   const isOwnSubmitted =
     initial.requester_id === profile.id && initial.status === 'submitted'
   const editable = canEdit || isOwnSubmitted

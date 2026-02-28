@@ -478,7 +478,7 @@ async function runTurnInImport({
     supabase
       .from('profiles')
       .select('id, full_name')
-      .in('role', ['admin', 'producer']),
+      .in('role', ['admin', 'senior_web_producer', 'producer']),
     supabase
       .from('ad_week_events')
       .select('id, event_code, event_name, start_date, end_date')

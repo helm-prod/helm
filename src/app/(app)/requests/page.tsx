@@ -23,7 +23,7 @@ export default async function RequestsPage() {
   const { data: producers } = await supabase
     .from('profiles')
     .select('id, full_name')
-    .in('role', ['admin', 'producer'])
+    .in('role', ['admin', 'senior_web_producer', 'producer'])
     .order('full_name')
 
   return (

@@ -22,7 +22,8 @@ export default async function AdWeeksPage() {
   if (!profile) redirect('/login')
 
   const p = profile as Profile
-  const canCreate = p.role === 'admin' || p.role === 'producer'
+  const canCreate =
+    p.role === 'admin' || p.role === 'producer' || p.role === 'senior_web_producer'
 
   const { data: adWeeks } = await supabase
     .from('ad_weeks')

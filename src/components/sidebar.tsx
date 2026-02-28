@@ -4,8 +4,8 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { getAccessibleSlugs, getUserRole } from '@/lib/permissions'
-import { NAV_ITEMS } from '@/lib/nav-config'
+import { getEffectiveAccess, getUserRole } from '@/lib/permissions'
+import { NAV_ITEMS, ROLES } from '@/lib/nav-config'
 import type { Profile, UserRole } from '@/lib/types/database'
 
 type IconComponent = ({ className }: { className?: string }) => JSX.Element
@@ -41,8 +41,14 @@ export function Sidebar({ profile, myQueueCount }: { profile: Profile; myQueueCo
     let active = true
 
     async function loadPermissions() {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+
+      if (!user) return
+
       const resolvedRole = await getUserRole(supabase)
-      const slugs = await getAccessibleSlugs(supabase, resolvedRole)
+      const slugs = await getEffectiveAccess(supabase, user.id, resolvedRole)
 
       if (!active) return
       setRole(resolvedRole)
@@ -61,6 +67,8 @@ export function Sidebar({ profile, myQueueCount }: { profile: Profile; myQueueCo
     router.push('/login')
     router.refresh()
   }
+
+  const roleLabel = ROLES.find((entry) => entry.value === role)?.label || role
 
   const navItems = NAV_ITEMS.filter((item) => !(item.adminOnly && role !== 'admin'))
 
@@ -140,7 +148,7 @@ export function Sidebar({ profile, myQueueCount }: { profile: Profile; myQueueCo
           </div>
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium text-white">{profile.full_name}</p>
-            <p className="text-xs capitalize text-brand-500">{role}</p>
+            <p className="text-xs text-brand-500">{roleLabel}</p>
           </div>
         </div>
         <button

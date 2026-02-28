@@ -11,6 +11,18 @@ type Toast = {
   message: string
 }
 
+function formatRoleLabel(role: Profile['role']) {
+  if (role === 'admin') return 'Admin'
+  if (role === 'senior_web_producer') return 'Senior Web Producer'
+  return 'Producer'
+}
+
+function roleBadgeClass(role: Profile['role']) {
+  if (role === 'admin') return 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200'
+  if (role === 'senior_web_producer') return 'border-violet-500/40 bg-violet-500/15 text-violet-200'
+  return 'border-blue-500/40 bg-blue-500/15 text-blue-200'
+}
+
 export default function ProfilePageClient() {
   const supabase = useMemo(() => createClient(), [])
   const [loading, setLoading] = useState(true)
@@ -60,6 +72,7 @@ export default function ProfilePageClient() {
           .maybeSingle(),
       ])
 
+      // Always read role directly from the profiles table for current auth user.
       const profileData = (profileRes.data ?? null) as Profile | null
       const prefData = (prefRes.data ?? null) as UserPreferences | null
 
@@ -246,13 +259,9 @@ export default function ProfilePageClient() {
               <div>
                 <p className="text-xs uppercase tracking-wide text-brand-500">Role</p>
                 <span
-                  className={`mt-1 inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium capitalize ${
-                    profile.role === 'admin'
-                      ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200'
-                      : 'border-blue-500/40 bg-blue-500/15 text-blue-200'
-                  }`}
+                  className={`mt-1 inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${roleBadgeClass(profile.role)}`}
                 >
-                  {profile.role}
+                  {formatRoleLabel(profile.role)}
                 </span>
               </div>
             </div>

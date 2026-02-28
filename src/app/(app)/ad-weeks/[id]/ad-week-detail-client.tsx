@@ -107,7 +107,10 @@ export function AdWeekDetailClient({
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const supabase = createClient()
-  const canEdit = profile.role === 'admin' || profile.role === 'producer'
+  const canEdit =
+    profile.role === 'admin' ||
+    profile.role === 'producer' ||
+    profile.role === 'senior_web_producer'
   const isAdmin = profile.role === 'admin'
 
   const [adWeek, setAdWeek] = useState(initialAdWeek)

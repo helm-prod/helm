@@ -55,7 +55,9 @@ export function PanelDetailClient({
   const supabase = createClient()
   const isAdmin = profile.role === 'admin'
   const isAssigned = initial.assigned_to === profile.id
-  const canEdit = isAdmin || (profile.role === 'producer' && isAssigned)
+  const canEdit =
+    isAdmin ||
+    ((profile.role === 'producer' || profile.role === 'senior_web_producer') && isAssigned)
 
   const [panel, setPanel] = useState(initial)
   const [editing, setEditing] = useState(false)

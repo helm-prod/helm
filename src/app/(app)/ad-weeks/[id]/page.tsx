@@ -47,7 +47,7 @@ export default async function AdWeekDetailPage({
   const { data: producers } = await supabase
     .from('profiles')
     .select('id, full_name, email, role')
-    .in('role', ['admin', 'producer'])
+    .in('role', ['admin', 'senior_web_producer', 'producer'])
     .order('full_name')
 
   const { data: aorAssignments } = await supabase

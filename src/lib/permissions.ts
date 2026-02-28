@@ -1,11 +1,21 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { NAV_ITEMS } from '@/lib/nav-config'
+import { NAV_ITEMS, NON_ADMIN_ROLES } from '@/lib/nav-config'
 import type { UserRole } from '@/lib/types/database'
 
 type PageAccessRow = {
   page_slug: string
   role: UserRole
   is_enabled: boolean
+}
+
+type UserOverrideRow = {
+  page_slug: string
+  is_enabled: boolean
+}
+
+function getRoleDefault(role: UserRole): boolean {
+  if (role === 'senior_web_producer') return true
+  return false
 }
 
 export async function getUserRole(supabase: SupabaseClient): Promise<UserRole> {
@@ -23,58 +33,100 @@ export async function getUserRole(supabase: SupabaseClient): Promise<UserRole> {
     .eq('id', user.id)
     .maybeSingle()
 
-  return data?.role === 'admin' ? 'admin' : 'producer'
-}
-
-export async function getAccessibleSlugs(
-  supabase: SupabaseClient,
-  role: UserRole,
-): Promise<Set<string>> {
-  const { data } = await supabase
-    .from('page_access')
-    .select('page_slug, role, is_enabled')
-    .eq('role', role)
-
-  const rowMap = new Map<string, boolean>()
-  for (const row of (data ?? []) as PageAccessRow[]) {
-    rowMap.set(row.page_slug, row.is_enabled)
+  if (data?.role === 'admin' || data?.role === 'senior_web_producer' || data?.role === 'producer') {
+    return data.role
   }
 
-  const slugs = new Set<string>()
+  return 'producer'
+}
+
+export async function getEffectiveAccess(
+  supabase: SupabaseClient,
+  userId: string,
+  role: UserRole,
+): Promise<Set<string>> {
+  if (role === 'admin') {
+    return new Set(NAV_ITEMS.map((item) => item.slug))
+  }
+
+  const [defaultsRes, overridesRes] = await Promise.all([
+    supabase
+      .from('page_access')
+      .select('page_slug, role, is_enabled')
+      .eq('role', role),
+    supabase
+      .from('user_page_overrides')
+      .select('page_slug, is_enabled')
+      .eq('user_id', userId),
+  ])
+
+  const defaultsMap = new Map<string, boolean>()
+  for (const row of (defaultsRes.data ?? []) as PageAccessRow[]) {
+    defaultsMap.set(row.page_slug, row.is_enabled)
+  }
+
+  const effective = new Set<string>()
 
   for (const item of NAV_ITEMS) {
-    if (rowMap.has(item.slug)) {
-      if (rowMap.get(item.slug)) {
-        slugs.add(item.slug)
+    if (item.adminOnly) {
+      continue
+    }
+
+    if (defaultsMap.has(item.slug)) {
+      if (defaultsMap.get(item.slug)) {
+        effective.add(item.slug)
       }
       continue
     }
 
-    if (role === 'admin') {
-      slugs.add(item.slug)
+    if (getRoleDefault(role)) {
+      effective.add(item.slug)
     }
   }
 
-  return slugs
+  for (const row of (overridesRes.data ?? []) as UserOverrideRow[]) {
+    const item = NAV_ITEMS.find((navItem) => navItem.slug === row.page_slug)
+
+    if (!item || item.adminOnly) {
+      continue
+    }
+
+    if (row.is_enabled) {
+      effective.add(row.page_slug)
+    } else {
+      effective.delete(row.page_slug)
+    }
+  }
+
+  return effective
 }
 
 export async function checkPageAccess(
   supabase: SupabaseClient,
   pageSlug: string,
 ): Promise<boolean> {
-  const role = await getUserRole(supabase)
   const item = NAV_ITEMS.find((navItem) => navItem.slug === pageSlug)
 
   if (!item) {
     return false
   }
 
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  if (!user) {
+    return false
+  }
+
+  const role = await getUserRole(supabase)
+
   if (item.adminOnly && role !== 'admin') {
     return false
   }
 
-  const accessibleSlugs = await getAccessibleSlugs(supabase, role)
-  return accessibleSlugs.has(pageSlug)
+  const effectiveAccess = await getEffectiveAccess(supabase, user.id, role)
+  return effectiveAccess.has(pageSlug)
 }
 
 export async function ensurePageAccessRows(
@@ -87,10 +139,13 @@ export async function ensurePageAccessRows(
     return
   }
 
+  const roles = NON_ADMIN_ROLES.map((role) => role.value)
+
   const { data: existingRows } = await supabase
     .from('page_access')
     .select('page_slug, role')
     .in('page_slug', uniqueSlugs)
+    .in('role', roles)
 
   const existing = new Set(
     (existingRows ?? []).map((row: { page_slug: string; role: UserRole }) => `${row.page_slug}:${row.role}`),
@@ -99,8 +154,8 @@ export async function ensurePageAccessRows(
   const inserts: Array<{ page_slug: string; role: UserRole; is_enabled: boolean }> = []
 
   for (const slug of uniqueSlugs) {
-    if (!existing.has(`${slug}:admin`)) {
-      inserts.push({ page_slug: slug, role: 'admin', is_enabled: true })
+    if (!existing.has(`${slug}:senior_web_producer`)) {
+      inserts.push({ page_slug: slug, role: 'senior_web_producer', is_enabled: true })
     }
 
     if (!existing.has(`${slug}:producer`)) {

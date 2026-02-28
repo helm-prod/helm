@@ -36,7 +36,7 @@ export default async function PanelDetailPage({
   const { data: producers } = await supabase
     .from('profiles')
     .select('id, full_name, email')
-    .in('role', ['admin', 'producer'])
+    .in('role', ['admin', 'senior_web_producer', 'producer'])
     .order('full_name')
 
   const { data: events } = await supabase

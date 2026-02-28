@@ -20,7 +20,10 @@ interface Props {
 
 export function RequestsListClient({ profile, producers }: Props) {
   const supabase = createClient()
-  const canEdit = profile.role === 'admin' || profile.role === 'producer'
+  const canEdit =
+    profile.role === 'admin' ||
+    profile.role === 'producer' ||
+    profile.role === 'senior_web_producer'
 
   const [requests, setRequests] = useState<
     (WorkRequest & {

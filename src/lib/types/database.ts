@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'producer'
+export type UserRole = 'admin' | 'senior_web_producer' | 'producer'
 
 export type RequestType =
   | 'new_panel'
@@ -31,6 +31,15 @@ export interface PageAccess {
   id: string
   page_slug: string
   role: UserRole
+  is_enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface UserPageOverride {
+  id: string
+  user_id: string
+  page_slug: string
   is_enabled: boolean
   created_at: string
   updated_at: string
