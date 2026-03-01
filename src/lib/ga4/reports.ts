@@ -303,15 +303,16 @@ export async function fetchCategoriesReport(startDate: string, endDate: string) 
     startDate,
     endDate,
     dimensions: ['itemCategory'],
-    metrics: ['sessions', 'addToCarts'],
+    metrics: ['itemsViewed', 'addToCarts', 'itemRevenue'],
     limit: 10,
-    orderBys: [{ metric: { metricName: 'sessions' }, desc: true }],
+    orderBys: [{ metric: { metricName: 'itemsViewed' }, desc: true }],
   })
 
   return rows.map((row) => ({
     item_category: row.itemCategory || '(not set)',
-    sessions: toInteger(row.sessions),
+    items_viewed: toInteger(row.itemsViewed),
     add_to_carts: toInteger(row.addToCarts),
+    item_revenue: toNumber(row.itemRevenue),
   }))
 }
 

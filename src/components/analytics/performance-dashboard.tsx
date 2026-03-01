@@ -1,6 +1,7 @@
 'use client'
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { RefreshCw } from 'lucide-react'
 import {
   aggregateCategories,
   averageMetric,
@@ -92,8 +93,9 @@ interface TopPageReportRow {
 
 interface CategoryReportRow {
   item_category: string
-  sessions: number | null
+  items_viewed: number | null
   add_to_carts: number | null
+  item_revenue: number | null
 }
 
 interface BrandReportRow {
@@ -241,8 +243,9 @@ function parseTopPages(value: unknown): TopPageReportRow[] {
 function parseCategories(value: unknown): CategoryReportRow[] {
   return asRecordArray(value).map((row) => ({
     item_category: asString(row.item_category, '(not set)'),
-    sessions: asNumber(row.sessions),
+    items_viewed: asNumber(row.items_viewed),
     add_to_carts: asNumber(row.add_to_carts),
+    item_revenue: asNumber(row.item_revenue),
   }))
 }
 
@@ -648,10 +651,19 @@ export function PerformanceDashboard({ profileId, allProfiles }: Props) {
   const devicesCurrent = useMemo(() => parseDevices(getBucket('devices').current), [getBucket])
   const channelsCurrent = useMemo(() => parseChannels(getBucket('channels').current), [getBucket])
   const searchTermsCurrent = useMemo(() => parseSearchTerms(getBucket('search_terms').current), [getBucket])
-  const topPagesCurrent = useMemo(() => parseTopPages(getBucket('top_pages').current), [getBucket])
+  const topPagesBucket = useMemo(() => getBucket('top_pages'), [getBucket])
+  const topPagesCurrent = useMemo(() => parseTopPages(topPagesBucket.current), [topPagesBucket])
+  const topPagesPrevious = useMemo(() => parseTopPages(topPagesBucket.previous), [topPagesBucket])
+  const shouldUseTopPagesPrevious = topPagesBucket.current == null && topPagesPrevious.length > 0
+  const topPagesDisplay = shouldUseTopPagesPrevious ? topPagesPrevious : topPagesCurrent
+
   const categoriesCurrent = useMemo(() => parseCategories(getBucket('categories').current), [getBucket])
   const couponsCurrent = useMemo(() => parseCoupons(getBucket('coupons').current), [getBucket])
-  const brandsCurrent = useMemo(() => parseBrands(getBucket('brands').current), [getBucket])
+  const brandsBucket = useMemo(() => getBucket('brands'), [getBucket])
+  const brandsCurrent = useMemo(() => parseBrands(brandsBucket.current), [brandsBucket])
+  const brandsPrevious = useMemo(() => parseBrands(brandsBucket.previous), [brandsBucket])
+  const shouldUseBrandsPrevious = brandsBucket.current == null && brandsPrevious.length > 0
+  const brandsDisplay = shouldUseBrandsPrevious ? brandsPrevious : brandsCurrent
   const itemsCurrent = useMemo(() => parseItems(getBucket('items').current), [getBucket])
   const itemsViewedCurrent = useMemo(
     () => parseItemsViewed(getBucket('items_viewed').current),
@@ -769,7 +781,17 @@ export function PerformanceDashboard({ profileId, allProfiles }: Props) {
 
       {!siteLoading && !siteError && !hasSiteData ? (
         <div className="rounded-2xl border border-brand-800 bg-brand-900 p-6 text-sm text-brand-400">
-          No site data available. Click Refresh to pull latest analytics.
+          <p>No site data available. Click Refresh to pull latest analytics.</p>
+          <button
+            type="button"
+            onClick={() => void handleRefresh()}
+            disabled={refreshing || disabledForCooldown}
+            className="mt-4 inline-flex items-center gap-2 rounded-lg border border-brand-700 px-3 py-1.5 text-sm text-brand-200 transition-colors hover:bg-brand-800/50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+            <span>Refresh Data</span>
+            {disabledForCooldown && !refreshing ? <span>({cooldownSeconds}s)</span> : null}
+          </button>
         </div>
       ) : null}
 
@@ -933,10 +955,15 @@ export function PerformanceDashboard({ profileId, allProfiles }: Props) {
 
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
               <Panel title="Top Viewed Pages">
-                {topPagesCurrent.length === 0 ? (
+                {topPagesDisplay.length === 0 ? (
                   <NoData />
                 ) : (
                   <div className="overflow-x-auto">
+                    {shouldUseTopPagesPrevious ? (
+                      <p className="mb-2 text-xs text-brand-500">
+                        (Previous period — current week data pending)
+                      </p>
+                    ) : null}
                     <table className="min-w-full text-sm">
                       <thead>
                         <tr className="text-left text-xs uppercase tracking-wide text-[#4a9ead]">
@@ -948,7 +975,7 @@ export function PerformanceDashboard({ profileId, allProfiles }: Props) {
                         </tr>
                       </thead>
                       <tbody>
-                        {topPagesCurrent.slice(0, 10).map((row, index) => (
+                        {topPagesDisplay.slice(0, 10).map((row, index) => (
                           <tr key={`${row.page_path}-${index}`} className="border-b border-brand-800/50 hover:bg-[#0d2137]">
                             <td className="px-2 py-2 text-brand-400">{index + 1}.</td>
                             <td className="px-2 py-2 text-brand-200" title={row.page_title}>
@@ -979,8 +1006,9 @@ export function PerformanceDashboard({ profileId, allProfiles }: Props) {
                         <tr className="text-left text-xs uppercase tracking-wide text-[#4a9ead]">
                           <th className="px-2 py-2">#</th>
                           <th className="px-2 py-2">Item category</th>
-                          <th className="px-2 py-2">Sessions</th>
+                          <th className="px-2 py-2">Items Viewed</th>
                           <th className="px-2 py-2">Items added to cart</th>
+                          <th className="px-2 py-2">Revenue</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -988,8 +1016,9 @@ export function PerformanceDashboard({ profileId, allProfiles }: Props) {
                           <tr key={`${row.item_category}-${index}`} className="border-b border-brand-800/50 hover:bg-[#0d2137]">
                             <td className="px-2 py-2 text-brand-400">{index + 1}.</td>
                             <td className="px-2 py-2 text-brand-200">{row.item_category}</td>
-                            <td className="px-2 py-2 text-white">{formatInteger(row.sessions ?? 0)}</td>
+                            <td className="px-2 py-2 text-white">{formatInteger(row.items_viewed ?? 0)}</td>
                             <td className="px-2 py-2 text-white">{formatInteger(row.add_to_carts ?? 0)}</td>
+                            <td className="px-2 py-2 text-white">{formatCurrency(row.item_revenue ?? 0)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1092,10 +1121,15 @@ export function PerformanceDashboard({ profileId, allProfiles }: Props) {
               </Panel>
 
               <Panel title="Top 10 Brands by Revenue">
-                {brandsCurrent.length === 0 ? (
+                {brandsDisplay.length === 0 ? (
                   <NoData />
                 ) : (
                   <div className="overflow-x-auto">
+                    {shouldUseBrandsPrevious ? (
+                      <p className="mb-2 text-xs text-brand-500">
+                        (Previous period — current week data pending)
+                      </p>
+                    ) : null}
                     <table className="min-w-full text-sm">
                       <thead>
                         <tr className="text-left text-xs uppercase tracking-wide text-[#4a9ead]">
@@ -1106,7 +1140,7 @@ export function PerformanceDashboard({ profileId, allProfiles }: Props) {
                         </tr>
                       </thead>
                       <tbody>
-                        {brandsCurrent.slice(0, 10).map((row, index) => (
+                        {brandsDisplay.slice(0, 10).map((row, index) => (
                           <tr key={`${row.item_brand}-${index}`} className="border-b border-brand-800/50 hover:bg-[#0d2137]">
                             <td className="px-2 py-2 text-brand-400">{index + 1}.</td>
                             <td className="px-2 py-2 text-brand-200" title={row.item_brand}>
