@@ -283,6 +283,14 @@ export async function POST(request: NextRequest) {
       durationMs: Date.now() - startedAt,
     })
 
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://helm.nexweb.dev'
+    void fetch(`${appUrl}/api/ga4/site-reports`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    }).catch((err) => {
+      console.warn('Site reports refresh failed:', err)
+    })
+
     return NextResponse.json({
       status: 'success',
       current_week_rows: currentInserted,

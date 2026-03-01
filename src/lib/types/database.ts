@@ -468,6 +468,34 @@ export interface PagespeedResult {
   created_at: string
 }
 
+export interface SiteReportsResponse {
+  reports: Record<string, {
+    current?: unknown[]
+    previous?: unknown[]
+    last_year?: unknown[]
+  }>
+  ad_week_number: number | null
+  period_start: string | null
+  period_end: string | null
+  last_refreshed: string | null
+}
+
+export interface OverviewMetrics {
+  total_users: number
+  sessions: number
+  sessions_per_user: number
+  bounce_rate: number
+  engagement_rate: number
+  pageviews: number
+  purchase_revenue: number
+  ecommerce_purchases: number
+  first_time_purchasers: number
+  average_order_value: number
+  add_to_carts: number
+  purchaser_conversion_rate: number
+  acr: number
+}
+
 // Helper: compute generated_description from panel fields
 export function computeGeneratedDescription(fields: {
   prefix?: string | null
