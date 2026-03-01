@@ -11,7 +11,8 @@ async function getMonetateToken(): Promise<string> {
     return cachedToken.token
   }
 
-  const privateKey = process.env.MONETATE_PRIVATE_KEY
+  const rawKey = process.env.MONETATE_PRIVATE_KEY
+  const privateKey = rawKey?.replace(/\\n/g, '\n')
   const apiUser = process.env.MONETATE_API_USER
 
   if (!privateKey || !apiUser) {
@@ -25,13 +26,15 @@ async function getMonetateToken(): Promise<string> {
   const payload = Buffer.from(JSON.stringify({
     sub: apiUser,
     iss: apiUser,
-    aud: 'https://api.monetate.net',
+    aud: 'api.monetate.net',
     iat: now,
     exp: now + 300,
   })).toString('base64url')
 
   // Sign with RSA private key
   const signingInput = `${header}.${payload}`
+  console.log('[Monetate Auth] JWT payload:', JSON.stringify({ sub: apiUser, iss: apiUser, aud: 'https://api.monetate.net', iat: now, exp: now + 300 }))
+  console.log('[Monetate Auth] Private key starts with:', privateKey?.substring(0, 40))
   const sign = crypto.createSign('RSA-SHA256')
   sign.update(signingInput)
   const signature = sign.sign(privateKey, 'base64url')
