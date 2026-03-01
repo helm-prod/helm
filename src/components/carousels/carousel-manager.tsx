@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ChevronDown, ChevronRight, Copy, GripVertical, Plus, Trash2 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
-import type { HelmCarousel, HelmCarouselItem, Profile } from '@/lib/types/database'
+import type { CarouselItemType, HelmCarousel, HelmCarouselItem, Profile } from '@/lib/types/database'
 
 interface CarouselManagerProps {
   currentUser: Profile
@@ -15,6 +15,54 @@ type PageGroup = {
   pageSlug: string
   count: number
   latestUpdatedAt: string | null
+}
+
+type ItemFormValues = {
+  item_type: CarouselItemType
+  product_id: string
+  title: string
+  brand: string
+  price: string
+  image_url: string
+  link_url: string
+}
+
+const ITEM_TYPE_META: Record<CarouselItemType, {
+  label: string
+  badgeClass: string
+  borderClass: string
+  selectedButtonClass: string
+}> = {
+  product: {
+    label: 'Product',
+    badgeClass: 'bg-blue-100 text-blue-700',
+    borderClass: 'border-l-blue-400',
+    selectedButtonClass: 'border-blue-500 bg-blue-500 text-white',
+  },
+  category: {
+    label: 'Category',
+    badgeClass: 'bg-indigo-100 text-indigo-700',
+    borderClass: 'border-l-indigo-600',
+    selectedButtonClass: 'border-indigo-600 bg-indigo-600 text-white',
+  },
+  custom: {
+    label: 'Custom',
+    badgeClass: 'bg-purple-100 text-purple-700',
+    borderClass: 'border-l-purple-500',
+    selectedButtonClass: 'border-purple-500 bg-purple-500 text-white',
+  },
+}
+
+function emptyItemForm(): ItemFormValues {
+  return {
+    item_type: 'product',
+    product_id: '',
+    title: '',
+    brand: '',
+    price: '',
+    image_url: '',
+    link_url: '',
+  }
 }
 
 function sortCarousels(a: HelmCarousel, b: HelmCarousel) {
@@ -52,6 +100,11 @@ function makeTempId() {
   return `temp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
 
+function toNullable(value: string): string | null {
+  const trimmed = value.trim()
+  return trimmed ? trimmed : null
+}
+
 export function CarouselManager({ currentUser, initialCarousels, initialItems }: CarouselManagerProps) {
   const supabase = useMemo(() => createClient(), [])
 
@@ -70,6 +123,12 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
   const [draggingCarouselId, setDraggingCarouselId] = useState<string | null>(null)
   const [dragOverCarouselId, setDragOverCarouselId] = useState<string | null>(null)
   const [copiedPageSlug, setCopiedPageSlug] = useState<string | null>(null)
+  const [editingItemId, setEditingItemId] = useState<string | null>(null)
+  const [addingItemToCarousel, setAddingItemToCarousel] = useState<string | null>(null)
+  const [draggedItemId, setDraggedItemId] = useState<string | null>(null)
+  const [dragOverItemId, setDragOverItemId] = useState<string | null>(null)
+  const [deleteItemConfirmId, setDeleteItemConfirmId] = useState<string | null>(null)
+  const [itemForm, setItemForm] = useState<ItemFormValues>(() => emptyItemForm())
 
   const pageGroups = useMemo<PageGroup[]>(() => {
     const pageMap = new Map<string, PageGroup>()
@@ -327,6 +386,21 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
       return next
     })
     setDeleteConfirmId(null)
+    if (addingItemToCarousel === carouselId) {
+      setAddingItemToCarousel(null)
+      setItemForm(emptyItemForm())
+    }
+    if (editingItemId && removedItems.some((item) => item.id === editingItemId)) {
+      setEditingItemId(null)
+      setItemForm(emptyItemForm())
+    }
+    if (deleteItemConfirmId && removedItems.some((item) => item.id === deleteItemConfirmId)) {
+      setDeleteItemConfirmId(null)
+    }
+    if (draggedItemId && removedItems.some((item) => item.id === draggedItemId)) {
+      setDraggedItemId(null)
+      setDragOverItemId(null)
+    }
 
     const { error } = await supabase
       .from('helm_carousels')
@@ -367,6 +441,10 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
 
   async function handleDrop(event: React.DragEvent<HTMLDivElement>, targetCarouselId: string) {
     event.preventDefault()
+
+    if (draggedItemId) {
+      return
+    }
 
     const sourceCarouselId = draggingCarouselId || event.dataTransfer.getData('text/plain')
     setDragOverCarouselId(null)
@@ -437,6 +515,475 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
         }
       }))
     }
+  }
+
+  function buildItemPayload(values: ItemFormValues) {
+    const payload = {
+      item_type: values.item_type,
+      product_id: null as string | null,
+      title: values.title.trim() || 'Untitled Item',
+      brand: null as string | null,
+      price: null as string | null,
+      image_url: null as string | null,
+      link_url: null as string | null,
+    }
+
+    if (values.item_type === 'category') {
+      payload.image_url = toNullable(values.image_url)
+      payload.link_url = toNullable(values.link_url)
+      return payload
+    }
+
+    payload.product_id = toNullable(values.product_id)
+    payload.brand = toNullable(values.brand)
+    payload.price = toNullable(values.price)
+    payload.image_url = toNullable(values.image_url)
+    payload.link_url = toNullable(values.link_url)
+    return payload
+  }
+
+  function resetItemEditorState() {
+    setEditingItemId(null)
+    setAddingItemToCarousel(null)
+    setDeleteItemConfirmId(null)
+    setItemForm(emptyItemForm())
+  }
+
+  function openAddItemForm(carouselId: string) {
+    setAddingItemToCarousel(carouselId)
+    setEditingItemId(null)
+    setDeleteItemConfirmId(null)
+    setItemForm(emptyItemForm())
+  }
+
+  function openEditItemForm(item: HelmCarouselItem) {
+    setEditingItemId(item.id)
+    setAddingItemToCarousel(null)
+    setDeleteItemConfirmId(null)
+    setItemForm({
+      item_type: item.item_type,
+      product_id: item.product_id ?? '',
+      title: item.title ?? '',
+      brand: item.brand ?? '',
+      price: item.price ?? '',
+      image_url: item.image_url ?? '',
+      link_url: item.link_url ?? '',
+    })
+  }
+
+  async function saveNewItem(carouselId: string) {
+    const carouselItems = [...(itemsByCarousel.get(carouselId) ?? [])].sort((a, b) => a.sort_order - b.sort_order)
+    const nextSortOrder = carouselItems.length > 0
+      ? Math.max(...carouselItems.map((item) => item.sort_order)) + 1
+      : 0
+    const now = new Date().toISOString()
+    const tempId = makeTempId()
+    const payload = buildItemPayload(itemForm)
+
+    const optimisticItem: HelmCarouselItem = {
+      id: tempId,
+      carousel_id: carouselId,
+      item_type: payload.item_type,
+      product_id: payload.product_id,
+      title: payload.title,
+      brand: payload.brand,
+      price: payload.price,
+      image_url: payload.image_url,
+      link_url: payload.link_url,
+      sort_order: nextSortOrder,
+      is_active: true,
+      created_at: now,
+      updated_at: now,
+    }
+
+    setItems((prev) => [...prev, optimisticItem])
+    resetItemEditorState()
+
+    const { data, error } = await supabase
+      .from('helm_carousel_items')
+      .insert({
+        carousel_id: carouselId,
+        item_type: payload.item_type,
+        product_id: payload.product_id,
+        title: payload.title,
+        brand: payload.brand,
+        price: payload.price,
+        image_url: payload.image_url,
+        link_url: payload.link_url,
+        sort_order: nextSortOrder,
+        is_active: true,
+      })
+      .select('*')
+      .single()
+
+    if (error || !data) {
+      console.error('Failed to create item:', error)
+      setItems((prev) => prev.filter((item) => item.id !== tempId))
+      return
+    }
+
+    setItems((prev) => prev.map((item) => (item.id === tempId ? (data as HelmCarouselItem) : item)))
+  }
+
+  async function saveEditedItem(item: HelmCarouselItem) {
+    const payload = buildItemPayload(itemForm)
+    const now = new Date().toISOString()
+    const previousItem = item
+
+    setItems((prev) => prev.map((entry) => entry.id === item.id
+      ? {
+        ...entry,
+        item_type: payload.item_type,
+        product_id: payload.product_id,
+        title: payload.title,
+        brand: payload.brand,
+        price: payload.price,
+        image_url: payload.image_url,
+        link_url: payload.link_url,
+        updated_at: now,
+      }
+      : entry))
+    setEditingItemId(null)
+    setDeleteItemConfirmId(null)
+    setItemForm(emptyItemForm())
+
+    const { error } = await supabase
+      .from('helm_carousel_items')
+      .update({
+        item_type: payload.item_type,
+        product_id: payload.product_id,
+        title: payload.title,
+        brand: payload.brand,
+        price: payload.price,
+        image_url: payload.image_url,
+        link_url: payload.link_url,
+      })
+      .eq('id', item.id)
+
+    if (error) {
+      console.error('Failed to update item:', error)
+      setItems((prev) => prev.map((entry) => entry.id === previousItem.id ? previousItem : entry))
+    }
+  }
+
+  async function toggleItemActive(item: HelmCarouselItem) {
+    const nextValue = !item.is_active
+    const now = new Date().toISOString()
+
+    setItems((prev) => prev.map((entry) => entry.id === item.id ? { ...entry, is_active: nextValue, updated_at: now } : entry))
+
+    const { error } = await supabase
+      .from('helm_carousel_items')
+      .update({ is_active: nextValue })
+      .eq('id', item.id)
+
+    if (error) {
+      console.error('Failed to toggle item status:', error)
+      setItems((prev) => prev.map((entry) => entry.id === item.id ? { ...entry, is_active: item.is_active } : entry))
+    }
+  }
+
+  async function confirmDeleteItem(itemId: string) {
+    const snapshot = items
+    const itemToDelete = snapshot.find((item) => item.id === itemId)
+    if (!itemToDelete) {
+      setDeleteItemConfirmId(null)
+      return
+    }
+
+    const carouselId = itemToDelete.carousel_id
+    const remainingCarouselItems = snapshot
+      .filter((item) => item.carousel_id === carouselId && item.id !== itemId)
+      .sort((a, b) => a.sort_order - b.sort_order)
+    const nextSortOrderMap = new Map<string, number>()
+    remainingCarouselItems.forEach((item, index) => nextSortOrderMap.set(item.id, index))
+
+    setItems((prev) => prev
+      .filter((item) => item.id !== itemId)
+      .map((item) => {
+        if (item.carousel_id !== carouselId) return item
+        const nextSortOrder = nextSortOrderMap.get(item.id)
+        if (nextSortOrder === undefined) return item
+        return { ...item, sort_order: nextSortOrder }
+      }))
+    if (editingItemId === itemId) {
+      setEditingItemId(null)
+      setItemForm(emptyItemForm())
+    }
+    setDeleteItemConfirmId(null)
+
+    const { error: deleteError } = await supabase
+      .from('helm_carousel_items')
+      .delete()
+      .eq('id', itemId)
+
+    if (deleteError) {
+      console.error('Failed to delete item:', deleteError)
+      setItems(snapshot)
+      return
+    }
+
+    const reorderUpdates = remainingCarouselItems
+      .map((item, index) => ({ id: item.id, sort_order: index }))
+      .filter(({ id, sort_order }) => {
+        const original = remainingCarouselItems.find((item) => item.id === id)
+        return original ? original.sort_order !== sort_order : false
+      })
+
+    if (reorderUpdates.length === 0) {
+      return
+    }
+
+    const results = await Promise.all(
+      reorderUpdates.map(({ id, sort_order }) => (
+        supabase
+          .from('helm_carousel_items')
+          .update({ sort_order })
+          .eq('id', id)
+      )),
+    )
+
+    const failed = results.find((result) => result.error)
+    if (failed) {
+      console.error('Failed to resequence items after delete:', failed.error)
+      setItems(snapshot)
+    }
+  }
+
+  function handleItemDragStart(event: React.DragEvent<HTMLDivElement>, itemId: string) {
+    event.stopPropagation()
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', itemId)
+    setDraggedItemId(itemId)
+  }
+
+  function handleItemDragOver(event: React.DragEvent<HTMLDivElement>, targetItemId: string) {
+    event.preventDefault()
+    event.stopPropagation()
+    if (!draggedItemId || draggedItemId === targetItemId) return
+
+    const draggedItem = items.find((item) => item.id === draggedItemId)
+    const targetItem = items.find((item) => item.id === targetItemId)
+    if (!draggedItem || !targetItem || draggedItem.carousel_id !== targetItem.carousel_id) return
+
+    event.dataTransfer.dropEffect = 'move'
+    setDragOverItemId(targetItemId)
+  }
+
+  function handleItemDragEnd() {
+    setDraggedItemId(null)
+    setDragOverItemId(null)
+  }
+
+  async function handleItemDrop(event: React.DragEvent<HTMLDivElement>, carouselId: string, targetItemId: string) {
+    event.preventDefault()
+    event.stopPropagation()
+
+    const sourceItemId = draggedItemId || event.dataTransfer.getData('text/plain')
+    setDragOverItemId(null)
+    setDraggedItemId(null)
+
+    if (!sourceItemId || sourceItemId === targetItemId) {
+      return
+    }
+
+    const currentCarouselItems = items
+      .filter((item) => item.carousel_id === carouselId)
+      .sort((a, b) => a.sort_order - b.sort_order)
+    const sourceIndex = currentCarouselItems.findIndex((item) => item.id === sourceItemId)
+    const targetIndex = currentCarouselItems.findIndex((item) => item.id === targetItemId)
+
+    if (sourceIndex === -1 || targetIndex === -1) {
+      return
+    }
+
+    const reordered = [...currentCarouselItems]
+    const [moved] = reordered.splice(sourceIndex, 1)
+    reordered.splice(targetIndex, 0, moved)
+
+    const nextSortOrders = new Map<string, number>()
+    reordered.forEach((item, index) => nextSortOrders.set(item.id, index))
+
+    const previousSortOrders = new Map<string, number>()
+    currentCarouselItems.forEach((item) => previousSortOrders.set(item.id, item.sort_order))
+
+    const now = new Date().toISOString()
+    setItems((prev) => prev.map((item) => {
+      if (item.carousel_id !== carouselId) return item
+      const nextSortOrder = nextSortOrders.get(item.id)
+      if (nextSortOrder === undefined) return item
+      return { ...item, sort_order: nextSortOrder, updated_at: now }
+    }))
+
+    const updates = Array.from(nextSortOrders.entries()).map(([id, sort_order]) => ({ id, sort_order }))
+    const results = await Promise.all(
+      updates.map(({ id, sort_order }) => (
+        supabase
+          .from('helm_carousel_items')
+          .update({ sort_order })
+          .eq('id', id)
+      )),
+    )
+
+    const failed = results.find((result) => result.error)
+    if (failed) {
+      console.error('Failed to reorder items:', failed.error)
+      setItems((prev) => prev.map((item) => {
+        if (item.carousel_id !== carouselId) return item
+        const previousSortOrder = previousSortOrders.get(item.id)
+        if (previousSortOrder === undefined) return item
+        return { ...item, sort_order: previousSortOrder }
+      }))
+    }
+  }
+
+  function renderItemForm(carouselId: string, mode: 'add' | 'edit', item?: HelmCarouselItem) {
+    const isEdit = mode === 'edit'
+    const showProductLikeFields = itemForm.item_type === 'product' || itemForm.item_type === 'custom'
+    const showCategoryFields = itemForm.item_type === 'category'
+    const typeOptions: CarouselItemType[] = ['product', 'category', 'custom']
+
+    return (
+      <div className="mt-2 rounded-lg border border-blue-200 bg-blue-50 p-3">
+        <div className="mb-3">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-600">Type</p>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {typeOptions.map((option) => {
+              const isSelected = itemForm.item_type === option
+              return (
+                <button
+                  key={option}
+                  type="button"
+                  onClick={() => setItemForm((prev) => ({ ...prev, item_type: option }))}
+                  className={`rounded-md border px-2 py-1 text-xs font-medium transition-colors ${
+                    isSelected
+                      ? ITEM_TYPE_META[option].selectedButtonClass
+                      : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400'
+                  }`}
+                >
+                  {ITEM_TYPE_META[option].label}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+          <label className="flex flex-col gap-1">
+            <span className="text-xs font-medium text-gray-600">Title</span>
+            <input
+              value={itemForm.title}
+              onChange={(event) => setItemForm((prev) => ({ ...prev, title: event.target.value }))}
+              placeholder={showCategoryFields ? 'Shop Spring Fashion' : 'Title'}
+              className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-900 outline-none focus:border-blue-500"
+            />
+          </label>
+
+          {showProductLikeFields ? (
+            <label className="flex flex-col gap-1">
+              <span className="text-xs font-medium text-gray-600">Brand</span>
+              <input
+                value={itemForm.brand}
+                onChange={(event) => setItemForm((prev) => ({ ...prev, brand: event.target.value }))}
+                placeholder="Brand"
+                className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-900 outline-none focus:border-blue-500"
+              />
+            </label>
+          ) : (
+            <label className="flex flex-col gap-1">
+              <span className="text-xs font-medium text-gray-600">Link URL</span>
+              <input
+                value={itemForm.link_url}
+                onChange={(event) => setItemForm((prev) => ({ ...prev, link_url: event.target.value }))}
+                placeholder="/spring-fashion"
+                className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-900 outline-none focus:border-blue-500"
+              />
+            </label>
+          )}
+
+          {showProductLikeFields ? (
+            <>
+              <label className="flex flex-col gap-1">
+                <span className="text-xs font-medium text-gray-600">Price</span>
+                <input
+                  value={itemForm.price}
+                  onChange={(event) => setItemForm((prev) => ({ ...prev, price: event.target.value }))}
+                  placeholder="$0.00"
+                  className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-900 outline-none focus:border-blue-500"
+                />
+              </label>
+
+              <label className="flex flex-col gap-1">
+                <span className="text-xs font-medium text-gray-600">Product ID / RIN</span>
+                <input
+                  value={itemForm.product_id}
+                  onChange={(event) => setItemForm((prev) => ({ ...prev, product_id: event.target.value }))}
+                  placeholder="Product ID / RIN"
+                  className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-900 outline-none focus:border-blue-500"
+                />
+              </label>
+            </>
+          ) : (
+            <label className="flex flex-col gap-1 md:col-span-2">
+              <span className="text-xs font-medium text-gray-600">Image URL (optional)</span>
+              <input
+                value={itemForm.image_url}
+                onChange={(event) => setItemForm((prev) => ({ ...prev, image_url: event.target.value }))}
+                placeholder="/prodimg/..."
+                className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-900 outline-none focus:border-blue-500"
+              />
+            </label>
+          )}
+
+          {showProductLikeFields && (
+            <>
+              <label className="flex flex-col gap-1">
+                <span className="text-xs font-medium text-gray-600">Image URL</span>
+                <input
+                  value={itemForm.image_url}
+                  onChange={(event) => setItemForm((prev) => ({ ...prev, image_url: event.target.value }))}
+                  placeholder="/prodimg/..."
+                  className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-900 outline-none focus:border-blue-500"
+                />
+              </label>
+
+              <label className="flex flex-col gap-1">
+                <span className="text-xs font-medium text-gray-600">Link URL</span>
+                <input
+                  value={itemForm.link_url}
+                  onChange={(event) => setItemForm((prev) => ({ ...prev, link_url: event.target.value }))}
+                  placeholder="/product/id/..."
+                  className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-900 outline-none focus:border-blue-500"
+                />
+              </label>
+            </>
+          )}
+        </div>
+
+        <div className="mt-3 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              if (isEdit && item) {
+                void saveEditedItem(item)
+                return
+              }
+              void saveNewItem(carouselId)
+            }}
+            className="rounded-md bg-blue-600 px-2.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-500"
+          >
+            Save
+          </button>
+          <button
+            type="button"
+            onClick={() => resetItemEditorState()}
+            className="px-1 text-xs font-medium text-gray-600 transition-colors hover:text-gray-900"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -695,23 +1242,123 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
 
                         {isExpanded && (
                           <div className="border-t border-gray-200 bg-gray-50 px-3 py-2">
-                            {carouselItems.length === 0 ? (
+                            {carouselItems.length === 0 && (
                               <p className="text-xs text-gray-500">No items in this carousel yet</p>
-                            ) : (
+                            )}
+
+                            {carouselItems.length > 0 && (
                               <div className="space-y-1.5">
-                                {carouselItems.map((item) => (
-                                  <div key={item.id} className="flex items-center justify-between rounded-md border border-gray-200 bg-white px-2.5 py-1.5">
-                                    <div className="min-w-0">
-                                      <p className="truncate text-xs font-medium text-gray-800">{item.title || 'Untitled item'}</p>
-                                      <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-gray-500">
-                                        <span className="rounded-full bg-gray-100 px-1.5 py-0.5 font-medium text-gray-700">{item.item_type}</span>
-                                        {!item.is_active && <span className="text-gray-400">Inactive</span>}
+                                {carouselItems.map((item) => {
+                                  const isItemEditing = editingItemId === item.id
+                                  const isItemDragging = draggedItemId === item.id
+                                  const isItemDropTarget = dragOverItemId === item.id && draggedItemId !== item.id
+                                  const productMeta = [item.brand, item.price].filter(Boolean).join(' · ')
+                                  const typeMeta = ITEM_TYPE_META[item.item_type]
+
+                                  return (
+                                    <div key={item.id}>
+                                      <div
+                                        draggable={!isItemEditing}
+                                        onDragStart={(event) => handleItemDragStart(event, item.id)}
+                                        onDragOver={(event) => handleItemDragOver(event, item.id)}
+                                        onDragLeave={() => setDragOverItemId((current) => (current === item.id ? null : current))}
+                                        onDrop={(event) => void handleItemDrop(event, carousel.id, item.id)}
+                                        onDragEnd={handleItemDragEnd}
+                                        className={`rounded-md border border-l-4 bg-white px-2.5 py-1.5 transition ${
+                                          typeMeta.borderClass
+                                        } ${isItemDropTarget ? 'border-t-2 border-t-blue-400' : ''} ${isItemDragging ? 'opacity-50' : ''}`}
+                                      >
+                                        <div className="flex items-center justify-between gap-2">
+                                          <div className="flex min-w-0 flex-1 items-center gap-2">
+                                            <GripVertical className="h-3.5 w-3.5 shrink-0 cursor-grab text-gray-400" />
+                                            <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${typeMeta.badgeClass}`}>
+                                              {typeMeta.label}
+                                            </span>
+                                            <button
+                                              type="button"
+                                              onClick={() => openEditItemForm(item)}
+                                              className="truncate text-left text-sm font-medium text-gray-800 hover:text-blue-700"
+                                            >
+                                              {item.title || 'Untitled Item'}
+                                            </button>
+                                            {item.item_type === 'product' && productMeta && (
+                                              <span className="truncate text-xs text-gray-500">{productMeta}</span>
+                                            )}
+                                            {item.item_type === 'category' && item.link_url && (
+                                              <span className="truncate text-xs text-gray-500">{item.link_url}</span>
+                                            )}
+                                          </div>
+
+                                          <div className="flex items-center gap-1.5">
+                                            <button
+                                              type="button"
+                                              onClick={() => void toggleItemActive(item)}
+                                              role="switch"
+                                              aria-checked={item.is_active}
+                                              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                                                item.is_active ? 'bg-emerald-500' : 'bg-gray-300'
+                                              }`}
+                                              title={item.is_active ? 'Active' : 'Inactive'}
+                                            >
+                                              <span
+                                                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                                                  item.is_active ? 'translate-x-4' : 'translate-x-0.5'
+                                                }`}
+                                              />
+                                            </button>
+
+                                            <button
+                                              type="button"
+                                              onClick={() => setDeleteItemConfirmId((current) => current === item.id ? null : item.id)}
+                                              className="rounded-md p-1 text-red-500 transition-colors hover:bg-red-50 hover:text-red-600"
+                                              title="Delete item"
+                                            >
+                                              <Trash2 className="h-4 w-4" />
+                                            </button>
+                                          </div>
+                                        </div>
+
+                                        {deleteItemConfirmId === item.id && (
+                                          <div className="mt-2 flex items-center justify-between gap-2 border-t border-red-100 pt-2 text-xs text-red-700">
+                                            <span>Delete this item?</span>
+                                            <div className="flex items-center gap-1.5">
+                                              <button
+                                                type="button"
+                                                onClick={() => void confirmDeleteItem(item.id)}
+                                                className="rounded-md bg-red-600 px-2 py-1 text-[11px] font-medium text-white transition-colors hover:bg-red-500"
+                                              >
+                                                Yes
+                                              </button>
+                                              <button
+                                                type="button"
+                                                onClick={() => setDeleteItemConfirmId(null)}
+                                                className="rounded-md border border-red-200 px-2 py-1 text-[11px] font-medium text-red-700 transition-colors hover:bg-red-100"
+                                              >
+                                                No
+                                              </button>
+                                            </div>
+                                          </div>
+                                        )}
                                       </div>
+
+                                      {isItemEditing && renderItemForm(carousel.id, 'edit', item)}
                                     </div>
-                                    <span className={`h-2 w-2 rounded-full ${item.is_active ? 'bg-emerald-500' : 'bg-gray-300'}`} />
-                                  </div>
-                                ))}
+                                  )
+                                })}
                               </div>
+                            )}
+
+                            {addingItemToCarousel === carousel.id ? (
+                              renderItemForm(carousel.id, 'add')
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => openAddItemForm(carousel.id)}
+                                className="mt-2 inline-flex items-center gap-1 rounded-md border border-gray-300 bg-white px-2 py-1 text-xs font-medium text-gray-700 transition-colors hover:border-gray-400 hover:bg-gray-100"
+                              >
+                                <Plus className="h-3.5 w-3.5" />
+                                Add Item
+                              </button>
                             )}
                           </div>
                         )}

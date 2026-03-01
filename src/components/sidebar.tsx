@@ -1,6 +1,6 @@
 'use client'
 
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, type ReactNode, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { Activity, BarChart3, ChevronDown, ChevronRight, GalleryHorizontalEnd, Gauge } from 'lucide-react'
@@ -9,7 +9,7 @@ import { getEffectiveAccess, getUserRole } from '@/lib/permissions'
 import { NAV_ITEMS, formatRoleName } from '@/lib/nav-config'
 import type { Profile, UserRole } from '@/lib/types/database'
 
-type IconComponent = ({ className }: { className?: string }) => JSX.Element
+type IconComponent = ({ className }: { className?: string }) => ReactNode
 
 const ICON_MAP: Record<string, IconComponent> = {
   LayoutDashboard: LayoutDashboardIcon,
