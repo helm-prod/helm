@@ -30,7 +30,7 @@ export default async function SitePerformancePage() {
     <PageGuard pageSlug="analytics-performance">
       <div className="max-w-6xl">
         <h1 className="mb-2 text-2xl font-bold text-white">Site Performance</h1>
-        <p className="mb-8 text-brand-400">GA4 analytics deep-dive by category and producer</p>
+        <p className="mb-8 text-brand-400">MNE.COM Web Data</p>
         <PerformanceDashboard profileId={p.id} allProfiles={allProfiles ?? []} userRole={p.role} />
       </div>
     </PageGuard>
