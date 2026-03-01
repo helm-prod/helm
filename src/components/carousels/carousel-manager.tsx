@@ -133,6 +133,9 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
   const [itemForm, setItemForm] = useState<ItemFormValues>(() => emptyItemForm())
   const [isLookupLoading, setIsLookupLoading] = useState(false)
   const [lookupError, setLookupError] = useState<string | null>(null)
+  const [lookupAvailability, setLookupAvailability] = useState<string | null>(null)
+  const [lookupSource, setLookupSource] = useState<string | null>(null)
+  const [lookupSuggestions, setLookupSuggestions] = useState<{ image_url?: string; link_url?: string } | null>(null)
 
   const pageGroups = useMemo<PageGroup[]>(() => {
     const pageMap = new Map<string, PageGroup>()
@@ -394,12 +397,18 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
       setAddingItemToCarousel(null)
       setLookupError(null)
       setIsLookupLoading(false)
+      setLookupAvailability(null)
+      setLookupSource(null)
+      setLookupSuggestions(null)
       setItemForm(emptyItemForm())
     }
     if (editingItemId && removedItems.some((item) => item.id === editingItemId)) {
       setEditingItemId(null)
       setLookupError(null)
       setIsLookupLoading(false)
+      setLookupAvailability(null)
+      setLookupSource(null)
+      setLookupSuggestions(null)
       setItemForm(emptyItemForm())
     }
     if (deleteItemConfirmId && removedItems.some((item) => item.id === deleteItemConfirmId)) {
@@ -557,6 +566,9 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
     setDeleteItemConfirmId(null)
     setLookupError(null)
     setIsLookupLoading(false)
+    setLookupAvailability(null)
+    setLookupSource(null)
+    setLookupSuggestions(null)
     setItemForm(emptyItemForm())
   }
 
@@ -566,6 +578,9 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
     setDeleteItemConfirmId(null)
     setLookupError(null)
     setIsLookupLoading(false)
+    setLookupAvailability(null)
+    setLookupSource(null)
+    setLookupSuggestions(null)
     setItemForm(emptyItemForm())
   }
 
@@ -575,6 +590,9 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
     setDeleteItemConfirmId(null)
     setLookupError(null)
     setIsLookupLoading(false)
+    setLookupAvailability(null)
+    setLookupSource(null)
+    setLookupSuggestions(null)
     setItemForm({
       item_type: item.item_type,
       product_id: item.product_id ?? '',
@@ -587,12 +605,25 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
     })
   }
 
+  function autoFillLookupUrls(productId: string, suggestions?: { image_url?: string; link_url?: string } | null) {
+    if (!productId.trim()) return
+
+    setItemForm((prev) => ({
+      ...prev,
+      image_url: suggestions?.image_url || `https://www.mynavyexchange.com/products/images/large/${productId}_000.jpg`,
+      link_url: suggestions?.link_url || `/product/id/${productId}`,
+    }))
+  }
+
   async function handleLookupProduct() {
     const productId = itemForm.product_id.trim()
     if (!productId) return
 
     setIsLookupLoading(true)
     setLookupError(null)
+    setLookupSource(null)
+    setLookupAvailability(null)
+    setLookupSuggestions(null)
 
     try {
       const response = await fetch(`/api/product-lookup?id=${encodeURIComponent(productId)}`)
@@ -603,20 +634,39 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
           price?: string
           image_url?: string
           link_url?: string
+          availability?: string | boolean
+          source?: string
+          error?: string
+          suggested_image_url?: string
+          suggested_link_url?: string
         }
-        | { error?: string }
         | null
 
-      if (response.status === 404) {
-        setLookupError('Product not found — enter details manually')
-        return
-      }
-
       if (!response.ok) {
-        setLookupError('Lookup failed — try again or enter manually')
+        const defaultSuggestions = {
+          image_url: `https://www.mynavyexchange.com/products/images/large/${productId}_000.jpg`,
+          link_url: `/product/id/${productId}`,
+        }
+        const suggested = {
+          image_url: payload?.suggested_image_url || defaultSuggestions.image_url,
+          link_url: payload?.suggested_link_url || defaultSuggestions.link_url,
+        }
+
+        setLookupSuggestions(suggested)
+
+        if (response.status === 502 && (payload?.suggested_image_url || payload?.suggested_link_url)) {
+          autoFillLookupUrls(productId, suggested)
+        }
+
+        if (response.status === 404) {
+          setLookupError('Product not found — enter details manually')
+        } else {
+          setLookupError(payload?.error || 'Lookup failed — try again or enter manually')
+        }
         return
       }
 
+      setLookupSuggestions(null)
       setItemForm((prev) => ({
         ...prev,
         title: prev.title.trim() ? prev.title : (payload && 'title' in payload ? payload.title ?? prev.title : prev.title),
@@ -625,9 +675,20 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
         image_url: prev.image_url.trim() ? prev.image_url : (payload && 'image_url' in payload ? payload.image_url ?? prev.image_url : prev.image_url),
         link_url: prev.link_url.trim() ? prev.link_url : (payload && 'link_url' in payload ? payload.link_url ?? prev.link_url : prev.link_url),
       }))
+
+      if (payload?.source === 'monetate') {
+        setLookupSource('From Monetate catalog')
+      }
+      if (payload?.availability !== undefined && payload?.availability !== null && String(payload.availability).trim()) {
+        setLookupAvailability(String(payload.availability))
+      }
     } catch (error) {
       console.error('Lookup request failed:', error)
       setLookupError('Lookup failed — try again or enter manually')
+      setLookupSuggestions({
+        image_url: `https://www.mynavyexchange.com/products/images/large/${productId}_000.jpg`,
+        link_url: `/product/id/${productId}`,
+      })
     } finally {
       setIsLookupLoading(false)
     }
@@ -712,6 +773,9 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
     setDeleteItemConfirmId(null)
     setLookupError(null)
     setIsLookupLoading(false)
+    setLookupAvailability(null)
+    setLookupSource(null)
+    setLookupSuggestions(null)
     setItemForm(emptyItemForm())
 
     const { error } = await supabase
@@ -778,6 +842,9 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
       setEditingItemId(null)
       setLookupError(null)
       setIsLookupLoading(false)
+      setLookupAvailability(null)
+      setLookupSource(null)
+      setLookupSuggestions(null)
       setItemForm(emptyItemForm())
     }
     setDeleteItemConfirmId(null)
@@ -914,7 +981,8 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
     const isCustomType = itemForm.item_type === 'custom'
     const showProductLikeFields = isProductType || isCustomType
     const typeOptions: CarouselItemType[] = ['product', 'category', 'custom']
-    const canLookup = itemForm.product_id.trim().length > 0
+    const productId = itemForm.product_id.trim()
+    const canLookup = productId.length > 0
     const typeInstruction = isProductType
       ? 'Add a product by RIN/SKU. Use Lookup to auto-fill from the live site (MSRP only — enter deal/NEX price manually).'
       : isCategoryType
@@ -941,6 +1009,9 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
                   type="button"
                   onClick={() => {
                     setLookupError(null)
+                    setLookupSource(null)
+                    setLookupAvailability(null)
+                    setLookupSuggestions(null)
                     setItemForm((prev) => ({ ...prev, item_type: option }))
                   }}
                   className={`rounded-md border px-2 py-1 text-xs font-medium transition-colors ${
@@ -1012,6 +1083,9 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
                     value={itemForm.product_id}
                     onChange={(event) => {
                       setLookupError(null)
+                      setLookupSource(null)
+                      setLookupAvailability(null)
+                      setLookupSuggestions(null)
                       setItemForm((prev) => ({ ...prev, product_id: event.target.value }))
                     }}
                     placeholder="e.g. 17373915"
@@ -1034,14 +1108,47 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
                     )}
                   </button>
                 </div>
-                {lookupError && <span className="text-xs text-red-600">{lookupError}</span>}
+                {lookupError && (
+                  <div className="flex items-center gap-1 text-xs text-red-600">
+                    <span>{lookupError}</span>
+                    <button
+                      type="button"
+                      onClick={() => autoFillLookupUrls(productId, lookupSuggestions)}
+                      className="underline underline-offset-2 hover:text-red-700"
+                    >
+                      Auto-fill URLs
+                    </button>
+                  </div>
+                )}
+                {!lookupError && lookupSource === 'From Monetate catalog' && (
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-emerald-600">✓ From Monetate catalog</span>
+                    {lookupAvailability && (
+                      <span
+                        className={`rounded-full px-2 py-0.5 font-medium ${
+                          String(lookupAvailability).toLowerCase().includes('out')
+                            ? 'bg-red-100 text-red-700'
+                            : 'bg-emerald-100 text-emerald-700'
+                        }`}
+                      >
+                        {String(lookupAvailability).toLowerCase().includes('out') ? 'Out of Stock' : 'In Stock'}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             ) : (
               <label className="flex flex-col gap-1">
                 <span className="text-xs font-medium text-gray-600">Product ID / RIN</span>
                 <input
                   value={itemForm.product_id}
-                  onChange={(event) => setItemForm((prev) => ({ ...prev, product_id: event.target.value }))}
+                  onChange={(event) => {
+                    setLookupError(null)
+                    setLookupSource(null)
+                    setLookupAvailability(null)
+                    setLookupSuggestions(null)
+                    setItemForm((prev) => ({ ...prev, product_id: event.target.value }))
+                  }}
                   placeholder="e.g. 17373915"
                   className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-900 outline-none focus:border-blue-500"
                 />
