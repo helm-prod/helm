@@ -17,6 +17,7 @@ export const NAV_ITEMS: NavItem[] = [
   { slug: 'calendar', label: 'Calendar', icon: 'Calendar' },
   { slug: 'editor', label: 'Editor', icon: 'Code' },
   { slug: 'templates', label: 'Templates', icon: 'Layout' },
+  { slug: 'carousels', label: 'Carousels', icon: 'GalleryHorizontalEnd' },
   { slug: 'upload', label: 'Upload', icon: 'Upload' },
   { slug: 'aor-settings', label: 'AOR Settings', icon: 'Settings2' },
   { slug: 'analytics-performance', label: 'Site Performance', icon: 'Activity' },

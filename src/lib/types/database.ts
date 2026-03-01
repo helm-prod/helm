@@ -592,3 +592,32 @@ export const EDITOR_LANGUAGE_EXTENSIONS: Record<EditorLanguage, string> = {
   css: '.css',
   javascript: '.js',
 }
+
+export interface HelmCarousel {
+  id: string
+  page_slug: string
+  title: string
+  sort_order: number
+  is_active: boolean
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface HelmCarouselItem {
+  id: string
+  carousel_id: string
+  item_type: 'product' | 'category' | 'custom'
+  product_id: string | null
+  title: string
+  brand: string | null
+  price: string | null
+  image_url: string | null
+  link_url: string | null
+  sort_order: number
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export type CarouselItemType = 'product' | 'category' | 'custom'
