@@ -1,7 +1,17 @@
-import { type NextRequest } from 'next/server'
+import { type NextRequest, NextResponse } from 'next/server'
 import { updateSession } from '@/lib/supabase/middleware'
 
+// Public API routes that bypass auth middleware
+const PUBLIC_API_PREFIXES = ['/api/carousels']
+
 export async function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl
+
+  // Skip auth for public API routes
+  if (PUBLIC_API_PREFIXES.some(prefix => pathname.startsWith(prefix))) {
+    return NextResponse.next()
+  }
+
   return await updateSession(request)
 }
 
