@@ -39,10 +39,13 @@ async function getMonetateToken(): Promise<string> {
   const jwt = `${signingInput}.${signature}`
 
   // Exchange JWT for access token
-  const authResponse = await fetch('https://api.monetate.net/api/auth/v0/token/', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ assertion: jwt, grant_type: 'jwt' }),
+  const authResponse = await fetch('https://api.monetate.net/api/auth/v0/refresh/', {
+    method: 'GET',
+    headers: {
+      'Authorization': `JWT ${jwt}`,
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+    },
   })
 
   if (!authResponse.ok) {
