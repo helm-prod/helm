@@ -616,8 +616,10 @@ export interface HelmCarouselItem {
   link_url: string | null
   sort_order: number
   is_active: boolean
+  price_display: PriceDisplay
   created_at: string
   updated_at: string
 }
 
 export type CarouselItemType = 'product' | 'category' | 'custom'
+export type PriceDisplay = 'always' | 'auth_only' | 'hidden'

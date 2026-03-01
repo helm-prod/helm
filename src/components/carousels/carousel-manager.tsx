@@ -1,9 +1,9 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { ChevronDown, ChevronRight, Copy, GripVertical, Plus, Trash2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, Copy, EyeOff, GripVertical, Loader2, Lock, Plus, Search, Trash2 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
-import type { CarouselItemType, HelmCarousel, HelmCarouselItem, Profile } from '@/lib/types/database'
+import type { CarouselItemType, HelmCarousel, HelmCarouselItem, PriceDisplay, Profile } from '@/lib/types/database'
 
 interface CarouselManagerProps {
   currentUser: Profile
@@ -23,6 +23,7 @@ type ItemFormValues = {
   title: string
   brand: string
   price: string
+  price_display: PriceDisplay
   image_url: string
   link_url: string
 }
@@ -60,6 +61,7 @@ function emptyItemForm(): ItemFormValues {
     title: '',
     brand: '',
     price: '',
+    price_display: 'always',
     image_url: '',
     link_url: '',
   }
@@ -129,6 +131,8 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
   const [dragOverItemId, setDragOverItemId] = useState<string | null>(null)
   const [deleteItemConfirmId, setDeleteItemConfirmId] = useState<string | null>(null)
   const [itemForm, setItemForm] = useState<ItemFormValues>(() => emptyItemForm())
+  const [isLookupLoading, setIsLookupLoading] = useState(false)
+  const [lookupError, setLookupError] = useState<string | null>(null)
 
   const pageGroups = useMemo<PageGroup[]>(() => {
     const pageMap = new Map<string, PageGroup>()
@@ -388,10 +392,14 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
     setDeleteConfirmId(null)
     if (addingItemToCarousel === carouselId) {
       setAddingItemToCarousel(null)
+      setLookupError(null)
+      setIsLookupLoading(false)
       setItemForm(emptyItemForm())
     }
     if (editingItemId && removedItems.some((item) => item.id === editingItemId)) {
       setEditingItemId(null)
+      setLookupError(null)
+      setIsLookupLoading(false)
       setItemForm(emptyItemForm())
     }
     if (deleteItemConfirmId && removedItems.some((item) => item.id === deleteItemConfirmId)) {
@@ -524,6 +532,7 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
       title: values.title.trim() || 'Untitled Item',
       brand: null as string | null,
       price: null as string | null,
+      price_display: values.price_display,
       image_url: null as string | null,
       link_url: null as string | null,
     }
@@ -546,6 +555,8 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
     setEditingItemId(null)
     setAddingItemToCarousel(null)
     setDeleteItemConfirmId(null)
+    setLookupError(null)
+    setIsLookupLoading(false)
     setItemForm(emptyItemForm())
   }
 
@@ -553,6 +564,8 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
     setAddingItemToCarousel(carouselId)
     setEditingItemId(null)
     setDeleteItemConfirmId(null)
+    setLookupError(null)
+    setIsLookupLoading(false)
     setItemForm(emptyItemForm())
   }
 
@@ -560,15 +573,64 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
     setEditingItemId(item.id)
     setAddingItemToCarousel(null)
     setDeleteItemConfirmId(null)
+    setLookupError(null)
+    setIsLookupLoading(false)
     setItemForm({
       item_type: item.item_type,
       product_id: item.product_id ?? '',
       title: item.title ?? '',
       brand: item.brand ?? '',
       price: item.price ?? '',
+      price_display: item.price_display ?? 'always',
       image_url: item.image_url ?? '',
       link_url: item.link_url ?? '',
     })
+  }
+
+  async function handleLookupProduct() {
+    const productId = itemForm.product_id.trim()
+    if (!productId) return
+
+    setIsLookupLoading(true)
+    setLookupError(null)
+
+    try {
+      const response = await fetch(`/api/product-lookup?id=${encodeURIComponent(productId)}`)
+      const payload = await response.json().catch(() => null) as
+        | {
+          title?: string
+          brand?: string
+          price?: string
+          image_url?: string
+          link_url?: string
+        }
+        | { error?: string }
+        | null
+
+      if (response.status === 404) {
+        setLookupError('Product not found — enter details manually')
+        return
+      }
+
+      if (!response.ok) {
+        setLookupError('Lookup failed — try again or enter manually')
+        return
+      }
+
+      setItemForm((prev) => ({
+        ...prev,
+        title: prev.title.trim() ? prev.title : (payload && 'title' in payload ? payload.title ?? prev.title : prev.title),
+        brand: prev.brand.trim() ? prev.brand : (payload && 'brand' in payload ? payload.brand ?? prev.brand : prev.brand),
+        price: prev.price.trim() ? prev.price : (payload && 'price' in payload ? payload.price ?? prev.price : prev.price),
+        image_url: prev.image_url.trim() ? prev.image_url : (payload && 'image_url' in payload ? payload.image_url ?? prev.image_url : prev.image_url),
+        link_url: prev.link_url.trim() ? prev.link_url : (payload && 'link_url' in payload ? payload.link_url ?? prev.link_url : prev.link_url),
+      }))
+    } catch (error) {
+      console.error('Lookup request failed:', error)
+      setLookupError('Lookup failed — try again or enter manually')
+    } finally {
+      setIsLookupLoading(false)
+    }
   }
 
   async function saveNewItem(carouselId: string) {
@@ -588,6 +650,7 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
       title: payload.title,
       brand: payload.brand,
       price: payload.price,
+      price_display: payload.price_display,
       image_url: payload.image_url,
       link_url: payload.link_url,
       sort_order: nextSortOrder,
@@ -608,6 +671,7 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
         title: payload.title,
         brand: payload.brand,
         price: payload.price,
+        price_display: payload.price_display,
         image_url: payload.image_url,
         link_url: payload.link_url,
         sort_order: nextSortOrder,
@@ -638,6 +702,7 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
         title: payload.title,
         brand: payload.brand,
         price: payload.price,
+        price_display: payload.price_display,
         image_url: payload.image_url,
         link_url: payload.link_url,
         updated_at: now,
@@ -645,6 +710,8 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
       : entry))
     setEditingItemId(null)
     setDeleteItemConfirmId(null)
+    setLookupError(null)
+    setIsLookupLoading(false)
     setItemForm(emptyItemForm())
 
     const { error } = await supabase
@@ -655,6 +722,7 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
         title: payload.title,
         brand: payload.brand,
         price: payload.price,
+        price_display: payload.price_display,
         image_url: payload.image_url,
         link_url: payload.link_url,
       })
@@ -708,6 +776,8 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
       }))
     if (editingItemId === itemId) {
       setEditingItemId(null)
+      setLookupError(null)
+      setIsLookupLoading(false)
       setItemForm(emptyItemForm())
     }
     setDeleteItemConfirmId(null)
@@ -839,12 +909,27 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
 
   function renderItemForm(carouselId: string, mode: 'add' | 'edit', item?: HelmCarouselItem) {
     const isEdit = mode === 'edit'
-    const showProductLikeFields = itemForm.item_type === 'product' || itemForm.item_type === 'custom'
-    const showCategoryFields = itemForm.item_type === 'category'
+    const isProductType = itemForm.item_type === 'product'
+    const isCategoryType = itemForm.item_type === 'category'
+    const isCustomType = itemForm.item_type === 'custom'
+    const showProductLikeFields = isProductType || isCustomType
     const typeOptions: CarouselItemType[] = ['product', 'category', 'custom']
+    const canLookup = itemForm.product_id.trim().length > 0
+    const typeInstruction = isProductType
+      ? 'Add a product by RIN/SKU. Use Lookup to auto-fill from the live site (MSRP only — enter deal/NEX price manually).'
+      : isCategoryType
+        ? 'Add a category link tile. These render as navy blue cards with a SHOP NOW button.'
+        : 'Freeform item - all fields available. Use for non-standard content.'
+    const priceDisplayOptions: Array<{ value: PriceDisplay; label: string; title: string; selectedClass: string }> = [
+      { value: 'always', label: 'Always', title: 'Show to all visitors', selectedClass: 'border-blue-500 bg-blue-500 text-white' },
+      { value: 'auth_only', label: 'Signed-in only', title: 'Only show when customer is logged in', selectedClass: 'border-indigo-600 bg-indigo-600 text-white' },
+      { value: 'hidden', label: 'Hidden', title: "Store in Helm but don't render on page", selectedClass: 'border-purple-500 bg-purple-500 text-white' },
+    ]
 
     return (
       <div className="mt-2 rounded-lg border border-blue-200 bg-blue-50 p-3">
+        <p className="mb-3 text-xs text-gray-500">{typeInstruction}</p>
+
         <div className="mb-3">
           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-600">Type</p>
           <div className="flex flex-wrap items-center gap-1.5">
@@ -854,7 +939,10 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
                 <button
                   key={option}
                   type="button"
-                  onClick={() => setItemForm((prev) => ({ ...prev, item_type: option }))}
+                  onClick={() => {
+                    setLookupError(null)
+                    setItemForm((prev) => ({ ...prev, item_type: option }))
+                  }}
                   className={`rounded-md border px-2 py-1 text-xs font-medium transition-colors ${
                     isSelected
                       ? ITEM_TYPE_META[option].selectedButtonClass
@@ -874,7 +962,7 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
             <input
               value={itemForm.title}
               onChange={(event) => setItemForm((prev) => ({ ...prev, title: event.target.value }))}
-              placeholder={showCategoryFields ? 'Shop Spring Fashion' : 'Title'}
+              placeholder={isCategoryType ? 'Shop Spring Fashion' : 'Title'}
               className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-900 outline-none focus:border-blue-500"
             />
           </label>
@@ -898,33 +986,69 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
                 placeholder="/spring-fashion"
                 className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-900 outline-none focus:border-blue-500"
               />
+              <span className="text-xs text-gray-400">Relative path. Pattern: /{'{product-slug}/{id}'}</span>
+            </label>
+          )}
+
+          {showProductLikeFields && (
+            <label className="flex flex-col gap-1">
+              <span className="text-xs font-medium text-gray-600">Price</span>
+              <input
+                value={itemForm.price}
+                onChange={(event) => setItemForm((prev) => ({ ...prev, price: event.target.value }))}
+                placeholder="$0.00"
+                className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-900 outline-none focus:border-blue-500"
+              />
+              <span className="text-xs text-gray-400">MSRP from lookup. Override with deal/NEX price as needed.</span>
             </label>
           )}
 
           {showProductLikeFields ? (
-            <>
-              <label className="flex flex-col gap-1">
-                <span className="text-xs font-medium text-gray-600">Price</span>
-                <input
-                  value={itemForm.price}
-                  onChange={(event) => setItemForm((prev) => ({ ...prev, price: event.target.value }))}
-                  placeholder="$0.00"
-                  className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-900 outline-none focus:border-blue-500"
-                />
-              </label>
-
+            isProductType ? (
+              <div className="flex flex-col gap-1">
+                <span className="text-xs font-medium text-gray-600">Product ID / RIN</span>
+                <div className="flex items-center gap-2">
+                  <input
+                    value={itemForm.product_id}
+                    onChange={(event) => {
+                      setLookupError(null)
+                      setItemForm((prev) => ({ ...prev, product_id: event.target.value }))
+                    }}
+                    placeholder="e.g. 17373915"
+                    className="w-[70%] rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-900 outline-none focus:border-blue-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleLookupProduct()}
+                    disabled={!canLookup || isLookupLoading}
+                    title="Fetch product title, brand, MSRP, and image from mynavyexchange.com"
+                    className="inline-flex w-[30%] items-center justify-center gap-1 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:border-blue-400 hover:text-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isLookupLoading ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <>
+                        <Search className="h-3.5 w-3.5" />
+                        Lookup
+                      </>
+                    )}
+                  </button>
+                </div>
+                {lookupError && <span className="text-xs text-red-600">{lookupError}</span>}
+              </div>
+            ) : (
               <label className="flex flex-col gap-1">
                 <span className="text-xs font-medium text-gray-600">Product ID / RIN</span>
                 <input
                   value={itemForm.product_id}
                   onChange={(event) => setItemForm((prev) => ({ ...prev, product_id: event.target.value }))}
-                  placeholder="Product ID / RIN"
+                  placeholder="e.g. 17373915"
                   className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-900 outline-none focus:border-blue-500"
                 />
               </label>
-            </>
+            )
           ) : (
-            <label className="flex flex-col gap-1 md:col-span-2">
+            <label className="flex flex-col gap-1">
               <span className="text-xs font-medium text-gray-600">Image URL (optional)</span>
               <input
                 value={itemForm.image_url}
@@ -932,6 +1056,7 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
                 placeholder="/prodimg/..."
                 className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-900 outline-none focus:border-blue-500"
               />
+              <span className="text-xs text-gray-400">Full URL or path. Pattern: /products/images/large/{'{id}_{variant}'}.jpg</span>
             </label>
           )}
 
@@ -945,6 +1070,7 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
                   placeholder="/prodimg/..."
                   className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-900 outline-none focus:border-blue-500"
                 />
+                <span className="text-xs text-gray-400">Full URL or path. Pattern: /products/images/large/{'{id}_{variant}'}.jpg</span>
               </label>
 
               <label className="flex flex-col gap-1">
@@ -955,9 +1081,35 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
                   placeholder="/product/id/..."
                   className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-900 outline-none focus:border-blue-500"
                 />
+                <span className="text-xs text-gray-400">Relative path. Pattern: /{'{product-slug}/{id}'}</span>
               </label>
             </>
           )}
+        </div>
+
+        <div className="mt-2">
+          <p className="mb-1 text-xs font-medium text-gray-600">Price Display</p>
+          <div className="flex flex-wrap gap-1.5">
+            {priceDisplayOptions.map((option) => {
+              const isSelected = itemForm.price_display === option.value
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  title={option.title}
+                  onClick={() => setItemForm((prev) => ({ ...prev, price_display: option.value }))}
+                  className={`rounded-md border px-2 py-1 text-xs font-medium transition-colors ${
+                    isSelected
+                      ? option.selectedClass
+                      : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              )
+            })}
+          </div>
+          <p className="mt-1 text-xs text-gray-400">Controls whether price is visible to unauthenticated visitors on the live page.</p>
         </div>
 
         <div className="mt-3 flex items-center gap-2">
@@ -986,6 +1138,40 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
     )
   }
 
+  function renderPriceDisplay(item: HelmCarouselItem) {
+    if (!item.price) {
+      if (item.price_display === 'hidden') {
+        return (
+          <span className="inline-flex items-center gap-1 text-xs text-gray-400" title="Price hidden from page">
+            <EyeOff className="h-3 w-3" />
+            Hidden
+          </span>
+        )
+      }
+      return null
+    }
+
+    if (item.price_display === 'auth_only') {
+      return (
+        <span className="inline-flex items-center gap-1 text-xs text-gray-500" title="Price only shown to signed-in customers">
+          <span>{item.price}</span>
+          <Lock className="h-3 w-3" />
+        </span>
+      )
+    }
+
+    if (item.price_display === 'hidden') {
+      return (
+        <span className="inline-flex items-center gap-1 text-xs text-gray-400" title="Price hidden from page">
+          <span className="line-through">{item.price}</span>
+          <EyeOff className="h-3 w-3" />
+        </span>
+      )
+    }
+
+    return <span className="text-xs text-gray-500">{item.price}</span>
+  }
+
   return (
     <div className="-m-8 flex h-screen overflow-hidden">
       <aside className="flex w-[280px] flex-col border-r border-gray-800 bg-gray-900 text-white">
@@ -998,11 +1184,14 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
               setNewPageValue('')
             }}
             className="rounded-md bg-blue-600 p-1.5 text-white transition-colors hover:bg-blue-500"
-            title="Create page group"
+            title="Create a new page carousel set. The slug must match the Endeca page path."
           >
             <Plus className="h-4 w-4" />
           </button>
         </div>
+        <p className="px-4 py-2 text-xs text-gray-400">
+          Manage product carousels for mynavyexchange.com pages. Each page slug maps to an Endeca cartridge.
+        </p>
 
         <div className="flex-1 overflow-y-auto p-3">
           {isCreatingPage && (
@@ -1049,7 +1238,7 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
 
           {pageGroups.length === 0 ? (
             <p className="rounded-lg border border-dashed border-gray-700 px-3 py-6 text-center text-sm text-gray-400">
-              No pages yet - create one to get started
+              No carousel pages yet. Create one to get started — the page slug should match an Endeca page path (e.g. 'daily-deals').
             </p>
           ) : (
             <div className="space-y-2">
@@ -1079,6 +1268,7 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
                       <button
                         type="button"
                         onClick={() => void handleCopySnippet(group.pageSlug)}
+                        title="Copy the HTML snippet to paste into an Endeca LargeTextHome cartridge"
                         className="inline-flex items-center gap-1 text-[11px] font-medium text-gray-300 transition-colors hover:text-white"
                       >
                         <Copy className="h-3.5 w-3.5" />
@@ -1097,7 +1287,7 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
         <div className="mx-auto w-full max-w-5xl p-6">
           {!selectedPage ? (
             <div className="rounded-xl border border-dashed border-gray-300 bg-white px-6 py-12 text-center text-gray-500">
-              No pages yet - create one to get started
+              No carousel pages yet. Create one to get started — the page slug should match an Endeca page path (e.g. 'daily-deals').
             </div>
           ) : (
             <>
@@ -1109,6 +1299,7 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
                 <button
                   type="button"
                   onClick={() => void createCarousel()}
+                  title="Add a new carousel section to this page. You can have multiple carousels per page."
                   className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-500"
                 >
                   <Plus className="h-4 w-4" />
@@ -1118,7 +1309,7 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
 
               {selectedCarousels.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-gray-300 bg-white px-6 py-12 text-center text-gray-500">
-                  No carousels on this page yet
+                  No carousels on this page yet. Add one to start building your product showcase.
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -1144,7 +1335,9 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
                       >
                         <div className="flex items-center justify-between gap-3 p-3">
                           <div className="flex min-w-0 flex-1 items-center gap-3">
-                            <GripVertical className="h-4 w-4 shrink-0 text-gray-400" />
+                            <span title="Drag to reorder carousels on this page">
+                              <GripVertical className="h-4 w-4 shrink-0 cursor-grab text-gray-400" />
+                            </span>
 
                             {isEditing ? (
                               <input
@@ -1189,7 +1382,7 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
                               className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
                                 carousel.is_active ? 'bg-emerald-500' : 'bg-gray-300'
                               }`}
-                              title={carousel.is_active ? 'Active' : 'Inactive'}
+                              title="Toggle whether this carousel renders on the live page"
                             >
                               <span
                                 className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
@@ -1211,7 +1404,7 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
                               type="button"
                               onClick={() => setDeleteConfirmId((current) => current === carousel.id ? null : carousel.id)}
                               className="rounded-md p-1 text-red-500 transition-colors hover:bg-red-50 hover:text-red-600"
-                              title="Delete carousel"
+                              title="Delete this carousel and all its items"
                             >
                               <Trash2 className="h-4 w-4" />
                             </button>
@@ -1243,7 +1436,7 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
                         {isExpanded && (
                           <div className="border-t border-gray-200 bg-gray-50 px-3 py-2">
                             {carouselItems.length === 0 && (
-                              <p className="text-xs text-gray-500">No items in this carousel yet</p>
+                              <p className="text-xs text-gray-500">No items yet. Add products by RIN, category links, or custom content.</p>
                             )}
 
                             {carouselItems.length > 0 && (
@@ -1252,7 +1445,6 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
                                   const isItemEditing = editingItemId === item.id
                                   const isItemDragging = draggedItemId === item.id
                                   const isItemDropTarget = dragOverItemId === item.id && draggedItemId !== item.id
-                                  const productMeta = [item.brand, item.price].filter(Boolean).join(' · ')
                                   const typeMeta = ITEM_TYPE_META[item.item_type]
 
                                   return (
@@ -1281,11 +1473,20 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
                                             >
                                               {item.title || 'Untitled Item'}
                                             </button>
-                                            {item.item_type === 'product' && productMeta && (
-                                              <span className="truncate text-xs text-gray-500">{productMeta}</span>
+                                            {item.item_type === 'product' && (
+                                              <span className="inline-flex items-center gap-1 text-xs text-gray-500">
+                                                {item.brand && <span className="truncate">{item.brand}</span>}
+                                                {item.brand && item.price && <span>·</span>}
+                                                {renderPriceDisplay(item)}
+                                              </span>
                                             )}
                                             {item.item_type === 'category' && item.link_url && (
                                               <span className="truncate text-xs text-gray-500">{item.link_url}</span>
+                                            )}
+                                            {item.item_type === 'custom' && item.price && (
+                                              <span className="inline-flex items-center gap-1 text-xs text-gray-500">
+                                                {renderPriceDisplay(item)}
+                                              </span>
                                             )}
                                           </div>
 
