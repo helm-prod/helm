@@ -3,7 +3,7 @@
 import { Fragment, type ReactNode, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { Activity, BarChart3, Bug, ChevronDown, ChevronRight, GalleryHorizontalEnd, Gauge } from 'lucide-react'
+import { Activity, BarChart3, Bug, ChevronDown, ChevronRight, GalleryHorizontalEnd, Gauge, Search } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { getEffectiveAccess, getUserRole } from '@/lib/permissions'
 import { NAV_ITEMS, formatRoleName } from '@/lib/nav-config'
@@ -27,10 +27,17 @@ const ICON_MAP: Record<string, IconComponent> = {
   Settings: SettingsIcon,
   User: UserIcon,
   Shield: ShieldIcon,
+  Search: SearchIcon,
   Lock: LockIcon,
 }
 
 const ANALYTICS_NAV_ITEMS = [
+  {
+    slug: 'analytics-search',
+    label: 'Search Performance',
+    href: '/analytics/search',
+    Icon: Search,
+  },
   {
     slug: 'analytics-performance',
     label: 'Site Performance',
@@ -370,6 +377,14 @@ function ShieldIcon({ className }: { className?: string }) {
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M12 3l7.5 3v6.75c0 4.08-2.69 7.77-6.75 9-4.06-1.23-6.75-4.92-6.75-9V6L12 3z" />
       <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 12.75l1.5 1.5 3-3" />
+    </svg>
+  )
+}
+
+function SearchIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.3-4.3m1.8-5.2a7 7 0 11-14 0 7 7 0 0114 0z" />
     </svg>
   )
 }

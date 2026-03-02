@@ -5,6 +5,7 @@ import { PriorityBadge } from '@/components/priority-badge'
 import { StaticStatusBadge } from '@/components/status-badge'
 import { PageGuard } from '@/components/page-guard'
 import { Ga4Section } from '@/components/dashboard/ga4-section'
+import { GscOverviewCard } from '@/components/dashboard/gsc-overview-card'
 import {
   type Profile,
   REQUEST_TYPE_LABELS,
@@ -246,9 +247,10 @@ export default async function DashboardPage() {
         )}
       </section>
 
-      {/* GA4 Analytics */}
+      {/* Analytics */}
       {profile?.id ? (
-        <div className="border-t border-brand-800 pt-8">
+        <div className="space-y-6 border-t border-brand-800 pt-8">
+          <GscOverviewCard />
           <Ga4Section profileId={profile.id} allProfiles={allProfiles} userRole={profile.role} />
         </div>
       ) : null}

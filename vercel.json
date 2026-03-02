@@ -3,6 +3,10 @@
     {
       "path": "/api/ga4/refresh",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron/gsc-sync",
+      "schedule": "0 8 * * *"
     }
   ]
 }

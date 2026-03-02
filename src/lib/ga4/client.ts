@@ -1,4 +1,4 @@
-import { JWT } from 'google-auth-library'
+import { getGoogleAccessToken } from '@/lib/google-auth'
 
 export interface FetchGa4ReportArgs {
   startDate: string
@@ -149,25 +149,7 @@ const PATH_FILTER = {
 }
 
 export async function getGa4AccessToken(): Promise<string> {
-  const clientEmail = process.env.GA4_CLIENT_EMAIL
-  const privateKey = process.env.GA4_PRIVATE_KEY?.replace(/\\n/g, '\n')
-
-  if (!clientEmail || !privateKey) {
-    throw new Error('Missing GA4 service account credentials (GA4_CLIENT_EMAIL / GA4_PRIVATE_KEY)')
-  }
-
-  const jwt = new JWT({
-    email: clientEmail,
-    key: privateKey,
-    scopes: ['https://www.googleapis.com/auth/analytics.readonly'],
-  })
-
-  const tokenResponse = await jwt.authorize()
-  if (!tokenResponse.access_token) {
-    throw new Error('Failed to get GA4 access token')
-  }
-
-  return tokenResponse.access_token
+  return getGoogleAccessToken('https://www.googleapis.com/auth/analytics.readonly')
 }
 
 async function runReportRequest({
