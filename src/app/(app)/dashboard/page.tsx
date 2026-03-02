@@ -6,6 +6,7 @@ import { StaticStatusBadge } from '@/components/status-badge'
 import { PageGuard } from '@/components/page-guard'
 import { Ga4Section } from '@/components/dashboard/ga4-section'
 import { GscOverviewCard } from '@/components/dashboard/gsc-overview-card'
+import { GmcOverviewCard } from '@/components/dashboard/gmc-overview-card'
 import {
   type Profile,
   REQUEST_TYPE_LABELS,
@@ -251,6 +252,7 @@ export default async function DashboardPage() {
       {profile?.id ? (
         <div className="space-y-6 border-t border-brand-800 pt-8">
           <GscOverviewCard />
+          <GmcOverviewCard />
           <Ga4Section profileId={profile.id} allProfiles={allProfiles} userRole={profile.role} />
         </div>
       ) : null}

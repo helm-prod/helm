@@ -21,6 +21,7 @@ export const NAV_ITEMS: NavItem[] = [
   { slug: 'upload', label: 'Upload', icon: 'Upload' },
   { slug: 'aor-settings', label: 'AOR Settings', icon: 'Settings2' },
   { slug: 'analytics-search', label: 'Search Performance', icon: 'Search' },
+  { slug: 'analytics-products', label: 'Products', icon: 'Package' },
   { slug: 'analytics-performance', label: 'Site Performance', icon: 'Activity' },
   { slug: 'analytics-speed', label: 'Site Speed', icon: 'Gauge' },
   { slug: 'sops', label: 'SOPs', icon: 'BookOpen' },
