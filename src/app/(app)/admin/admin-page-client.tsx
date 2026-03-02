@@ -14,6 +14,41 @@ type PageGroup = {
   label: string
   slugs: string[]
 }
+type UserAuthMeta = {
+  email: string | null
+  last_sign_in_at: string | null
+  banned_until: string | null
+}
+type RowNotice = {
+  type: 'success' | 'error'
+  message: string
+}
+
+const RELATIVE_TIME_FORMATTER = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
+
+function formatRelativeTime(isoString: string | null | undefined) {
+  if (!isoString) return 'Never'
+
+  const parsed = new Date(isoString)
+  if (Number.isNaN(parsed.getTime())) return 'Never'
+
+  const diffSeconds = Math.round((parsed.getTime() - Date.now()) / 1000)
+  const absSeconds = Math.abs(diffSeconds)
+
+  if (absSeconds < 60) return RELATIVE_TIME_FORMATTER.format(diffSeconds, 'second')
+  if (absSeconds < 60 * 60) return RELATIVE_TIME_FORMATTER.format(Math.round(diffSeconds / 60), 'minute')
+  if (absSeconds < 60 * 60 * 24) return RELATIVE_TIME_FORMATTER.format(Math.round(diffSeconds / 3600), 'hour')
+  if (absSeconds < 60 * 60 * 24 * 30) return RELATIVE_TIME_FORMATTER.format(Math.round(diffSeconds / 86400), 'day')
+  if (absSeconds < 60 * 60 * 24 * 365) return RELATIVE_TIME_FORMATTER.format(Math.round(diffSeconds / (86400 * 30)), 'month')
+  return RELATIVE_TIME_FORMATTER.format(Math.round(diffSeconds / (86400 * 365)), 'year')
+}
+
+function isUserLocked(bannedUntil: string | null | undefined) {
+  if (!bannedUntil || bannedUntil === 'none') return false
+  const parsed = Date.parse(bannedUntil)
+  if (Number.isNaN(parsed)) return true
+  return parsed > Date.now()
+}
 
 function roleBadgeClass(role: UserRole) {
   if (role === 'admin') return 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200'
@@ -68,6 +103,24 @@ function LockIcon({ className }: { className?: string }) {
         strokeWidth="1.3"
         strokeLinecap="round"
       />
+    </svg>
+  )
+}
+
+function MailIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <rect x="2" y="3" width="12" height="10" rx="2" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M3.5 5l4.5 3.5L12.5 5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function EditIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M3 11.5V13h1.5l6-6-1.5-1.5-6 6z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+      <path d="M8.8 5.2l1.5 1.5 1.1-1.1a1.06 1.06 0 000-1.5l-.1-.1a1.06 1.06 0 00-1.5 0L8.8 5.2z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
     </svg>
   )
 }
@@ -148,16 +201,34 @@ export default function AdminPageClient() {
   const [teamMembers, setTeamMembers] = useState<Profile[]>([])
   const [pageAccessRows, setPageAccessRows] = useState<PageAccess[]>([])
   const [overrideRows, setOverrideRows] = useState<UserPageOverride[]>([])
+  const [authMetaByUserId, setAuthMetaByUserId] = useState<Record<string, UserAuthMeta>>({})
 
   const [focusedUserId, setFocusedUserId] = useState<string | null>(null)
+  const [openActionsUserId, setOpenActionsUserId] = useState<string | null>(null)
+  const [editingEmailUserId, setEditingEmailUserId] = useState<string | null>(null)
+  const [emailDraft, setEmailDraft] = useState('')
+  const [rowNoticeByUserId, setRowNoticeByUserId] = useState<Record<string, RowNotice>>({})
 
   const [savingRoleUserId, setSavingRoleUserId] = useState<string | null>(null)
   const [savingCellKey, setSavingCellKey] = useState<string | null>(null)
+  const [savingAccountActionKey, setSavingAccountActionKey] = useState<string | null>(null)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
 
   const showToast = useCallback((message: string) => {
     setToastMessage(message)
     window.setTimeout(() => setToastMessage(null), 2200)
+  }, [])
+
+  const showRowNotice = useCallback((userId: string, notice: RowNotice) => {
+    setRowNoticeByUserId((prev) => ({ ...prev, [userId]: notice }))
+    window.setTimeout(() => {
+      setRowNoticeByUserId((prev) => {
+        if (!prev[userId] || prev[userId].message !== notice.message) return prev
+        const next = { ...prev }
+        delete next[userId]
+        return next
+      })
+    }, 3000)
   }, [])
 
   const nonAdminUsers = useMemo(
@@ -259,8 +330,25 @@ export default function AdminPageClient() {
     setTeamMembers((teamRes.data ?? []) as Profile[])
     setPageAccessRows((defaultsRes.data ?? []) as PageAccess[])
     setOverrideRows((overridesRes.data ?? []) as UserPageOverride[])
+
+    try {
+      const response = await fetch('/api/admin/users', { cache: 'no-store' })
+      const payload = (await response.json()) as {
+        users?: Record<string, UserAuthMeta>
+        error?: string
+      }
+
+      if (!response.ok) {
+        showToast(payload.error || 'Unable to load auth metadata')
+      } else {
+        setAuthMetaByUserId(payload.users ?? {})
+      }
+    } catch {
+      showToast('Unable to load auth metadata')
+    }
+
     setLoading(false)
-  }, [router, supabase])
+  }, [router, showToast, supabase])
 
   useEffect(() => {
     void loadAdminData()
@@ -303,6 +391,98 @@ export default function AdminPageClient() {
     }
 
     setSavingRoleUserId(null)
+  }
+
+  const upsertUserAuthMeta = useCallback((userId: string, patch: Partial<UserAuthMeta>) => {
+    setAuthMetaByUserId((prev) => ({
+      ...prev,
+      [userId]: {
+        email: prev[userId]?.email ?? null,
+        last_sign_in_at: prev[userId]?.last_sign_in_at ?? null,
+        banned_until: prev[userId]?.banned_until ?? null,
+        ...patch,
+      },
+    }))
+  }, [])
+
+  async function runAccountAction(
+    user: Profile,
+    body: {
+      action: 'reset_password' | 'toggle_lock' | 'update_email'
+      email?: string
+      banned?: boolean
+    },
+  ) {
+    const actionKey = `${body.action}:${user.id}`
+    setSavingAccountActionKey(actionKey)
+
+    let payload: Record<string, unknown> = {}
+    try {
+      const response = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...body, userId: user.id }),
+      })
+
+      payload = (await response.json()) as Record<string, unknown>
+
+      if (!response.ok) {
+        showRowNotice(user.id, {
+          type: 'error',
+          message: String(payload.error || 'Action failed'),
+        })
+        return false
+      }
+    } catch {
+      showRowNotice(user.id, {
+        type: 'error',
+        message: 'Request failed',
+      })
+      return false
+    } finally {
+      setSavingAccountActionKey(null)
+    }
+
+    if (body.action === 'reset_password') {
+      const sentTo = String(payload.email || user.email)
+      showRowNotice(user.id, {
+        type: 'success',
+        message: `Reset email sent to ${sentTo}`,
+      })
+      return true
+    }
+
+    if (body.action === 'toggle_lock') {
+      upsertUserAuthMeta(user.id, {
+        banned_until: (payload.banned_until as string | null | undefined) ?? null,
+      })
+      showRowNotice(user.id, {
+        type: 'success',
+        message: body.banned ? 'Account locked' : 'Account unlocked',
+      })
+      return true
+    }
+
+    if (body.action === 'update_email') {
+      const nextEmail = String(payload.email || body.email || user.email)
+      setTeamMembers((prev) =>
+        prev.map((member) => (member.id === user.id ? { ...member, email: nextEmail } : member)),
+      )
+      upsertUserAuthMeta(user.id, {
+        email: nextEmail,
+        banned_until: (payload.banned_until as string | null | undefined) ?? null,
+        last_sign_in_at: (payload.last_sign_in_at as string | null | undefined) ?? null,
+      })
+      setEditingEmailUserId(null)
+      setEmailDraft('')
+      showRowNotice(user.id, {
+        type: 'success',
+        message: `Email updated to ${nextEmail}`,
+      })
+      return true
+    }
+
+    return false
   }
 
   async function saveUserAccess(user: Profile, pageSlug: string, nextEnabled: boolean) {
@@ -422,52 +602,200 @@ export default function AdminPageClient() {
                   <th className="px-4 py-3 text-left font-medium">Name</th>
                   <th className="px-4 py-3 text-left font-medium">Email</th>
                   <th className="px-4 py-3 text-left font-medium">Role</th>
+                  <th className="px-4 py-3 text-left font-medium">Last Login</th>
+                  <th className="px-4 py-3 text-left font-medium">Status</th>
+                  <th className="px-4 py-3 text-left font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-brand-800/50">
                 {teamMembers.map((member) => {
                   const isSelf = member.id === currentUserId
                   const isSaving = savingRoleUserId === member.id
+                  const authMeta = authMetaByUserId[member.id]
+                  const isLocked = isUserLocked(authMeta?.banned_until)
+                  const actionMenuOpen = openActionsUserId === member.id
+                  const rowNotice = rowNoticeByUserId[member.id]
+                  const isResetting = savingAccountActionKey === `reset_password:${member.id}`
+                  const isLocking = savingAccountActionKey === `toggle_lock:${member.id}`
+                  const isUpdatingEmail = savingAccountActionKey === `update_email:${member.id}`
 
                   return (
-                    <tr key={member.id} className="hover:bg-brand-800/30">
-                      <td className="px-4 py-3 text-white">{member.full_name}</td>
-                      <td className="px-4 py-3 text-brand-300">{member.email}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-wrap items-center gap-3">
+                    <Fragment key={member.id}>
+                      <tr className="hover:bg-brand-800/30">
+                        <td className="px-4 py-3 text-white">{member.full_name}</td>
+                        <td className="px-4 py-3 text-brand-300">{member.email}</td>
+                        <td className="px-4 py-3">
+                          <div className="flex flex-wrap items-center gap-3">
+                            <span
+                              className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${roleBadgeClass(member.role)}`}
+                            >
+                              {formatRoleName(member.role)}
+                            </span>
+                            <select
+                              value={member.role}
+                              disabled={isSelf || isSaving}
+                              onChange={(event) => void updateTeamRole(member.id, event.target.value as UserRole)}
+                              className="rounded-lg border border-brand-700 bg-brand-900/70 px-2 py-1 text-xs text-white disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {ROLES.map((role) => (
+                                <option key={role.value} value={role.value}>
+                                  {formatRoleName(role.value)}
+                                </option>
+                              ))}
+                            </select>
+                            {isSelf && <span className="text-xs text-brand-500">You</span>}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-xs text-brand-300">{formatRelativeTime(authMeta?.last_sign_in_at)}</td>
+                        <td className="px-4 py-3">
                           <span
-                            className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${roleBadgeClass(member.role)}`}
+                            className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium ${
+                              isLocked
+                                ? 'border-red-500/30 bg-red-500/15 text-red-300'
+                                : 'border-emerald-500/30 bg-emerald-500/15 text-emerald-200'
+                            }`}
                           >
-                            {formatRoleName(member.role)}
+                            {isLocked && <LockIcon className="h-3 w-3" />}
+                            {isLocked ? 'Locked' : 'Active'}
                           </span>
-                          <select
-                            value={member.role}
-                            disabled={isSelf || isSaving}
-                            onChange={(event) => void updateTeamRole(member.id, event.target.value as UserRole)}
-                            className="rounded-lg border border-brand-700 bg-brand-900/70 px-2 py-1 text-xs text-white disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            {ROLES.map((role) => (
-                              <option key={role.value} value={role.value}>
-                                {formatRoleName(role.value)}
-                              </option>
-                            ))}
-                          </select>
-                          {member.role !== 'admin' && (
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="relative inline-block">
                             <button
                               type="button"
-                              onClick={() => {
-                                setFocusedUserId(member.id)
-                                setActiveTab('access')
-                              }}
-                              className="rounded-md border border-brand-700 px-2 py-1 text-xs text-brand-300 hover:border-brand-600 hover:text-white"
+                              onClick={() =>
+                                setOpenActionsUserId((prev) => (prev === member.id ? null : member.id))
+                              }
+                              className="rounded-md border border-brand-700 px-2 py-1 text-xs text-brand-300 transition-colors hover:border-brand-600 hover:text-white"
                             >
-                              Manage Access
+                              Manage
                             </button>
-                          )}
-                          {isSelf && <span className="text-xs text-brand-500">You</span>}
-                        </div>
-                      </td>
-                    </tr>
+
+                            {actionMenuOpen && (
+                              <div className="absolute right-0 top-full z-30 mt-1 w-44 rounded-lg border border-brand-700 bg-brand-900 p-1 shadow-xl">
+                                <button
+                                  type="button"
+                                  disabled={isResetting}
+                                  onClick={() => {
+                                    setOpenActionsUserId(null)
+                                    void runAccountAction(member, {
+                                      action: 'reset_password',
+                                      email: member.email,
+                                    })
+                                  }}
+                                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-brand-200 transition-colors hover:bg-brand-800 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  <MailIcon className="h-3.5 w-3.5" />
+                                  Reset Password
+                                </button>
+
+                                {!isSelf && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setOpenActionsUserId(null)
+                                      setEditingEmailUserId(member.id)
+                                      setEmailDraft(member.email)
+                                    }}
+                                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-brand-200 transition-colors hover:bg-brand-800"
+                                  >
+                                    <EditIcon className="h-3.5 w-3.5" />
+                                    Change Email
+                                  </button>
+                                )}
+
+                                {!isSelf && (
+                                  <button
+                                    type="button"
+                                    disabled={isLocking}
+                                    onClick={() => {
+                                      const nextLocked = !isLocked
+                                      if (nextLocked) {
+                                        const confirmed = window.confirm(
+                                          `Are you sure you want to lock ${getUserFullName(member)}'s account? They won't be able to sign in.`,
+                                        )
+                                        if (!confirmed) return
+                                      }
+
+                                      setOpenActionsUserId(null)
+                                      void runAccountAction(member, {
+                                        action: 'toggle_lock',
+                                        banned: nextLocked,
+                                      })
+                                    }}
+                                    className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-brand-800 disabled:cursor-not-allowed disabled:opacity-60 ${
+                                      isLocked ? 'text-emerald-300' : 'text-red-300'
+                                    }`}
+                                  >
+                                    <LockIcon className="h-3.5 w-3.5" />
+                                    {isLocked ? 'Unlock Account' : 'Lock Account'}
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+
+                      {editingEmailUserId === member.id && (
+                        <tr className="bg-brand-900/40">
+                          <td colSpan={6} className="px-4 py-3">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                              <input
+                                type="email"
+                                value={emailDraft}
+                                onChange={(event) => setEmailDraft(event.target.value)}
+                                className="w-full rounded-lg border border-brand-700 bg-brand-900 px-3 py-2 text-sm text-white placeholder:text-brand-500 sm:max-w-sm"
+                              />
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  disabled={isUpdatingEmail}
+                                  onClick={() => {
+                                    const nextEmail = emailDraft.trim()
+                                    if (!nextEmail) {
+                                      showRowNotice(member.id, { type: 'error', message: 'Email is required.' })
+                                      return
+                                    }
+                                    void runAccountAction(member, {
+                                      action: 'update_email',
+                                      email: nextEmail,
+                                    })
+                                  }}
+                                  className="rounded-md border border-emerald-500/40 bg-emerald-500/15 px-2.5 py-1.5 text-xs text-emerald-200 transition-colors hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  Save
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingEmailUserId(null)
+                                    setEmailDraft('')
+                                  }}
+                                  className="rounded-md border border-brand-700 px-2.5 py-1.5 text-xs text-brand-300 transition-colors hover:border-brand-600 hover:text-white"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+
+                      {rowNotice && (
+                        <tr className="bg-brand-900/20">
+                          <td colSpan={6} className="px-4 py-2">
+                            <p
+                              className={`text-xs ${
+                                rowNotice.type === 'success' ? 'text-emerald-300' : 'text-red-300'
+                              }`}
+                            >
+                              {rowNotice.message}
+                            </p>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   )
                 })}
               </tbody>
