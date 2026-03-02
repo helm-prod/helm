@@ -8,6 +8,13 @@ type AuthMetadata = {
   banned_until: string | null
 }
 
+type AuthUserRow = {
+  id: string
+  email: string | null
+  last_sign_in_at: string | null
+  banned_until: string | null
+}
+
 type ActionBody = {
   action?: 'reset_password' | 'toggle_lock' | 'update_email' | 'set_password'
   userId?: string
@@ -55,6 +62,18 @@ function getServiceClient() {
   }
 }
 
+function toUserRecord(rows: AuthUserRow[]) {
+  const users: Record<string, AuthMetadata> = {}
+  for (const row of rows) {
+    users[row.id] = {
+      email: row.email ?? null,
+      last_sign_in_at: row.last_sign_in_at ?? null,
+      banned_until: row.banned_until ?? null,
+    }
+  }
+  return users
+}
+
 export async function GET() {
   const admin = await requireAdmin()
   if (admin.error) return admin.error
@@ -63,31 +82,69 @@ export async function GET() {
   if (service.error) return service.error
 
   const supabase = service.client
-  const users: Record<string, AuthMetadata> = {}
-  const perPage = 200
-  let page = 1
 
-  while (true) {
-    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage })
-    if (error) {
-      console.error('Failed to list users from Supabase admin API', error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
-    }
+  // Approach 1: Supabase Auth Admin API pagination
+  try {
+    const rows: AuthUserRow[] = []
+    const perPage = 200
+    let page = 1
 
-    const pageUsers = data?.users ?? []
-    for (const user of pageUsers) {
-      users[user.id] = {
-        email: user.email ?? null,
-        last_sign_in_at: user.last_sign_in_at ?? null,
-        banned_until: user.banned_until ?? null,
+    while (true) {
+      const { data, error } = await supabase.auth.admin.listUsers({ page, perPage })
+      if (error) {
+        throw error
       }
+
+      const pageUsers = data?.users ?? []
+      for (const user of pageUsers) {
+        rows.push({
+          id: user.id,
+          email: user.email ?? null,
+          last_sign_in_at: user.last_sign_in_at ?? null,
+          banned_until: user.banned_until ?? null,
+        })
+      }
+
+      if (pageUsers.length < perPage) break
+      page += 1
     }
 
-    if (pageUsers.length < perPage) break
-    page += 1
+    return NextResponse.json({ users: toUserRecord(rows) })
+  } catch (error) {
+    console.error('GET /api/admin/users approach 1 failed: auth.admin.listUsers()', error)
   }
 
-  return NextResponse.json({ users })
+  // Approach 2: direct auth schema query with service role client
+  try {
+    const { data, error } = await supabase
+      .schema('auth')
+      .from('users')
+      .select('id, email, last_sign_in_at, banned_until')
+
+    if (error) {
+      throw error
+    }
+
+    return NextResponse.json({ users: toUserRecord((data ?? []) as AuthUserRow[]) })
+  } catch (error) {
+    console.error('GET /api/admin/users approach 2 failed: schema(auth).from(users)', error)
+  }
+
+  // Approach 3: fallback RPC (user-provided DB function)
+  try {
+    const { data, error } = await supabase.rpc('get_auth_users_admin')
+    if (error) {
+      throw error
+    }
+
+    return NextResponse.json({ users: toUserRecord((data ?? []) as AuthUserRow[]) })
+  } catch (error) {
+    console.error('GET /api/admin/users approach 3 failed: rpc(get_auth_users_admin)', error)
+    return NextResponse.json(
+      { error: 'Failed to fetch auth users metadata from all available approaches.' },
+      { status: 500 },
+    )
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -125,6 +182,7 @@ export async function POST(request: NextRequest) {
     if (!email) {
       const { data, error } = await supabase.auth.admin.getUserById(userId)
       if (error) {
+        console.error(`POST /api/admin/users reset_password getUserById failed for user ${userId}`, error)
         return NextResponse.json({ error: error.message }, { status: 400 })
       }
       email = data.user?.email ?? ''
@@ -136,6 +194,7 @@ export async function POST(request: NextRequest) {
 
     const { error } = await supabase.auth.resetPasswordForEmail(email)
     if (error) {
+      console.error(`POST /api/admin/users reset_password failed for email ${email}`, error)
       return NextResponse.json({ error: error.message }, { status: 400 })
     }
 
@@ -157,6 +216,7 @@ export async function POST(request: NextRequest) {
     })
 
     if (error) {
+      console.error(`POST /api/admin/users toggle_lock failed for user ${userId}`, error)
       return NextResponse.json({ error: error.message }, { status: 400 })
     }
 
@@ -179,6 +239,7 @@ export async function POST(request: NextRequest) {
     })
 
     if (error) {
+      console.error(`POST /api/admin/users update_email auth update failed for user ${userId}`, error)
       return NextResponse.json({ error: error.message }, { status: 400 })
     }
 
@@ -188,6 +249,7 @@ export async function POST(request: NextRequest) {
       .eq('id', userId)
 
     if (profileError) {
+      console.error(`POST /api/admin/users update_email profile sync failed for user ${userId}`, profileError)
       return NextResponse.json({ error: profileError.message }, { status: 500 })
     }
 
@@ -208,6 +270,7 @@ export async function POST(request: NextRequest) {
 
     const { error } = await supabase.auth.admin.updateUserById(userId, { password })
     if (error) {
+      console.error(`POST /api/admin/users set_password failed for user ${userId}`, error)
       return NextResponse.json({ error: error.message }, { status: 400 })
     }
 
