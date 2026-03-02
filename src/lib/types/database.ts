@@ -91,6 +91,7 @@ export interface BugReport {
   page_title: string | null
   user_agent: string | null
   viewport: string | null
+  type: 'bug' | 'feature_request'
   status: 'new' | 'in_progress' | 'resolved' | 'closed'
   priority: 'low' | 'medium' | 'high' | 'critical'
   admin_notes: string | null

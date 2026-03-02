@@ -2,7 +2,6 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { PageGuard } from '@/components/page-guard'
 import { BugsPageClient, type BugReportWithReporter } from '@/components/bugs/bugs-page-client'
-import type { Profile } from '@/lib/types/database'
 
 export default async function BugsPage() {
   const supabase = createClient()
@@ -16,7 +15,7 @@ export default async function BugsPage() {
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('*')
+    .select('role')
     .eq('id', user.id)
     .single()
 
@@ -26,15 +25,21 @@ export default async function BugsPage() {
 
   const { data: bugReports } = await supabase
     .from('bug_reports')
-    .select('*, reporter:profiles!reporter_id(full_name)')
+    .select('*, reporter:profiles!reporter_id(display_name, email)')
     .order('created_at', { ascending: false })
+
+  const bugsWithReporter = (bugReports ?? []).map((bug) => {
+    const reporter = (bug as { reporter?: { display_name?: string | null; email?: string | null } | null }).reporter
+    return {
+      ...(bug as Record<string, unknown>),
+      reporter_name: reporter?.display_name ?? 'Unknown reporter',
+      reporter_email: reporter?.email ?? null,
+    }
+  }) as BugReportWithReporter[]
 
   return (
     <PageGuard pageSlug="bugs">
-      <BugsPageClient
-        initialBugs={(bugReports ?? []) as BugReportWithReporter[]}
-        currentUserRole={(profile as Profile).role}
-      />
+      <BugsPageClient initialBugs={bugsWithReporter} isAdmin={profile.role === 'admin'} />
     </PageGuard>
   )
 }

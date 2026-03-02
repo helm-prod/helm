@@ -1,8 +1,9 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { Bug, Loader2, X } from 'lucide-react'
+import { Bug, Lightbulb, Loader2, X } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
+import type { BugReport } from '@/lib/types/database'
 
 export type BugReportContext = {
   screenshotDataUrl: string | null
@@ -22,6 +23,7 @@ type Props = {
 
 export function BugReportModal({ isOpen, context, onClose, onSubmitted }: Props) {
   const supabase = useMemo(() => createClient(), [])
+  const [reportType, setReportType] = useState<BugReport['type']>('bug')
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -29,6 +31,7 @@ export function BugReportModal({ isOpen, context, onClose, onSubmitted }: Props)
 
   useEffect(() => {
     if (!isOpen) return
+    setReportType('bug')
     setTitle('')
     setDescription('')
     setErrorMessage(null)
@@ -84,6 +87,7 @@ export function BugReportModal({ isOpen, context, onClose, onSubmitted }: Props)
 
       const { error: insertError } = await supabase.from('bug_reports').insert({
         reporter_id: user.id,
+        type: reportType,
         title: trimmedTitle,
         description: description.trim() || null,
         screenshot_url: screenshotUrl,
@@ -126,8 +130,17 @@ export function BugReportModal({ isOpen, context, onClose, onSubmitted }: Props)
       >
         <div className="flex items-start justify-between">
           <h2 className="flex items-center gap-2 text-xl font-semibold text-white">
-            <Bug className="h-5 w-5 text-amber-400" />
-            Report a Bug
+            {reportType === 'bug' ? (
+              <>
+                <Bug className="h-5 w-5 text-red-400" />
+                Report a Bug
+              </>
+            ) : (
+              <>
+                <Lightbulb className="h-5 w-5 text-purple-400" />
+                Feature Request
+              </>
+            )}
           </h2>
           <button
             type="button"
@@ -154,6 +167,36 @@ export function BugReportModal({ isOpen, context, onClose, onSubmitted }: Props)
         </div>
 
         <div className="mt-5 space-y-4">
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-zinc-100">Type</label>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setReportType('bug')}
+                className={`flex-1 flex items-center justify-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-medium transition-colors ${
+                  reportType === 'bug'
+                    ? 'bg-red-500/10 border-red-500/50 text-red-400'
+                    : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-600'
+                }`}
+              >
+                <Bug className="h-4 w-4" />
+                Bug
+              </button>
+              <button
+                type="button"
+                onClick={() => setReportType('feature_request')}
+                className={`flex-1 flex items-center justify-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-medium transition-colors ${
+                  reportType === 'feature_request'
+                    ? 'bg-purple-500/10 border-purple-500/50 text-purple-400'
+                    : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-600'
+                }`}
+              >
+                <Lightbulb className="h-4 w-4" />
+                Feature Request
+              </button>
+            </div>
+          </div>
+
           <div>
             <label className="mb-1.5 block text-sm font-medium text-zinc-100">
               Title <span className="text-amber-400">*</span>

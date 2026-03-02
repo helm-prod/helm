@@ -2,20 +2,22 @@
 
 import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Bug, ChevronDown, Clock, Monitor, User } from 'lucide-react'
+import { Bug, ChevronDown, Clock, Lightbulb, MessageSquare, Monitor, User } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
-import type { BugReport, UserRole } from '@/lib/types/database'
+import type { BugReport } from '@/lib/types/database'
 
 const RELATIVE_TIME_FORMATTER = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
 
 type StatusFilter = 'all' | BugReport['status']
+type TypeFilter = 'all' | BugReport['type']
 type Toast = {
   tone: 'success' | 'error'
   message: string
 }
 
 export type BugReportWithReporter = BugReport & {
-  reporter: { full_name: string | null } | null
+  reporter_name: string | null
+  reporter_email: string | null
 }
 
 const STATUS_LABELS: Record<BugReport['status'], string> = {
@@ -58,16 +60,34 @@ function formatRelativeTime(isoString: string) {
 
 type Props = {
   initialBugs: BugReportWithReporter[]
-  currentUserRole: UserRole
+  isAdmin: boolean
 }
 
-export function BugsPageClient({ initialBugs, currentUserRole }: Props) {
+function TypeBadge({ type }: { type: BugReport['type'] }) {
+  if (type === 'feature_request') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full border border-purple-500/20 bg-purple-500/10 px-2 py-0.5 text-xs font-medium text-purple-400">
+        <Lightbulb className="h-3 w-3" />
+        Feature
+      </span>
+    )
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-red-500/20 bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-400">
+      <Bug className="h-3 w-3" />
+      Bug
+    </span>
+  )
+}
+
+export function BugsPageClient({ initialBugs, isAdmin }: Props) {
   const supabase = useMemo(() => createClient(), [])
   const router = useRouter()
-  const isAdmin = currentUserRole === 'admin'
 
   const [bugs, setBugs] = useState<BugReportWithReporter[]>(initialBugs)
-  const [filter, setFilter] = useState<StatusFilter>('all')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>('all')
   const [expandedBugId, setExpandedBugId] = useState<string | null>(null)
   const [savingKey, setSavingKey] = useState<string | null>(null)
   const [toast, setToast] = useState<Toast | null>(null)
@@ -84,9 +104,12 @@ export function BugsPageClient({ initialBugs, currentUserRole }: Props) {
   }
 
   const filteredBugs = useMemo(() => {
-    if (filter === 'all') return bugs
-    return bugs.filter((bug) => bug.status === filter)
-  }, [bugs, filter])
+    return bugs.filter((bug) => {
+      const statusMatches = statusFilter === 'all' || bug.status === statusFilter
+      const typeMatches = typeFilter === 'all' || bug.type === typeFilter
+      return statusMatches && typeMatches
+    })
+  }, [bugs, statusFilter, typeFilter])
 
   const statusCounts = useMemo(() => {
     return bugs.reduce(
@@ -95,6 +118,20 @@ export function BugsPageClient({ initialBugs, currentUserRole }: Props) {
         return acc
       },
       { new: 0, in_progress: 0, resolved: 0, closed: 0 },
+    )
+  }, [bugs])
+
+  const typeCounts = useMemo(() => {
+    return bugs.reduce(
+      (acc, bug) => {
+        if (bug.type === 'feature_request') {
+          acc.feature_request += 1
+        } else {
+          acc.bug += 1
+        }
+        return acc
+      },
+      { bug: 0, feature_request: 0 },
     )
   }, [bugs])
 
@@ -111,9 +148,7 @@ export function BugsPageClient({ initialBugs, currentUserRole }: Props) {
     setSavingKey(`${bugId}:${patchKey}`)
 
     setBugs((prev) =>
-      prev.map((bug) =>
-        bug.id === bugId ? { ...bug, ...patch, updated_at: nextUpdatedAt } : bug,
-      ),
+      prev.map((bug) => (bug.id === bugId ? { ...bug, ...patch, updated_at: nextUpdatedAt } : bug)),
     )
 
     const { error } = await supabase
@@ -123,7 +158,7 @@ export function BugsPageClient({ initialBugs, currentUserRole }: Props) {
 
     if (error) {
       setBugs((prev) => prev.map((bug) => (bug.id === bugId ? previousBug : bug)))
-      showToast('error', error.message)
+      showToast('error', 'Could not save admin update.')
       setSavingKey(null)
       return
     }
@@ -134,7 +169,7 @@ export function BugsPageClient({ initialBugs, currentUserRole }: Props) {
   }
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div className="w-full space-y-6">
       {toast && (
         <div
           className={`fixed right-6 top-6 z-50 rounded-lg border px-3 py-2 text-sm shadow-lg ${
@@ -147,71 +182,92 @@ export function BugsPageClient({ initialBugs, currentUserRole }: Props) {
         </div>
       )}
 
-      <div>
+      <div className="space-y-3">
         <h1 className="flex items-center gap-2 text-2xl font-bold text-white">
           <Bug className="h-6 w-6 text-amber-400" />
           Bug Reports
         </h1>
-        <p className="mt-1 text-zinc-400">Track reported issues and monitor fix progress.</p>
+        <div className="flex flex-wrap gap-2">
+          <span className="inline-flex items-center rounded-full border border-red-500/30 bg-red-500/10 px-3 py-1 text-xs font-medium text-red-300">
+            New: {statusCounts.new}
+          </span>
+          <span className="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-300">
+            In Progress: {statusCounts.in_progress}
+          </span>
+          <span className="inline-flex items-center rounded-full border border-green-500/30 bg-green-500/10 px-3 py-1 text-xs font-medium text-green-300">
+            Resolved: {statusCounts.resolved}
+          </span>
+          <span className="inline-flex items-center rounded-full border border-zinc-500/30 bg-zinc-500/10 px-3 py-1 text-xs font-medium text-zinc-300">
+            Closed: {statusCounts.closed}
+          </span>
+          <span className="inline-flex items-center rounded-full border border-zinc-700 bg-zinc-800/70 px-3 py-1 text-xs font-medium text-zinc-300">
+            {typeCounts.bug} Bugs · {typeCounts.feature_request} Feature Requests
+          </span>
+        </div>
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        <span className="inline-flex items-center rounded-full border border-red-500/30 bg-red-500/10 px-3 py-1 text-xs font-medium text-red-300">
-          New: {statusCounts.new}
-        </span>
-        <span className="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-300">
-          In Progress: {statusCounts.in_progress}
-        </span>
-        <span className="inline-flex items-center rounded-full border border-green-500/30 bg-green-500/10 px-3 py-1 text-xs font-medium text-green-300">
-          Resolved: {statusCounts.resolved}
-        </span>
-        <span className="inline-flex items-center rounded-full border border-zinc-500/30 bg-zinc-500/10 px-3 py-1 text-xs font-medium text-zinc-300">
-          Closed: {statusCounts.closed}
-        </span>
-      </div>
+      <div className="space-y-2 rounded-lg border border-zinc-700 bg-zinc-900/60 p-2">
+        <div className="flex flex-wrap gap-2">
+          {([
+            { value: 'all', label: 'All Types' },
+            { value: 'bug', label: 'Bugs' },
+            { value: 'feature_request', label: 'Feature Requests' },
+          ] as const).map((item) => (
+            <button
+              key={item.value}
+              type="button"
+              onClick={() => setTypeFilter(item.value)}
+              className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
+                typeFilter === item.value
+                  ? 'bg-amber-500 text-black'
+                  : 'text-zinc-300 hover:bg-zinc-800 hover:text-white'
+              }`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
 
-      <div className="flex flex-wrap gap-2 rounded-lg border border-zinc-700 bg-zinc-900/60 p-2">
-        {([
-          { value: 'all', label: 'All' },
-          { value: 'new', label: 'New' },
-          { value: 'in_progress', label: 'In Progress' },
-          { value: 'resolved', label: 'Resolved' },
-          { value: 'closed', label: 'Closed' },
-        ] as const).map((item) => (
-          <button
-            key={item.value}
-            type="button"
-            onClick={() => setFilter(item.value)}
-            className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
-              filter === item.value
-                ? 'bg-amber-500 text-black'
-                : 'text-zinc-300 hover:bg-zinc-800 hover:text-white'
-            }`}
-          >
-            {item.label}
-          </button>
-        ))}
+        <div className="flex flex-wrap gap-2">
+          {([
+            { value: 'all', label: 'All' },
+            { value: 'new', label: 'New' },
+            { value: 'in_progress', label: 'In Progress' },
+            { value: 'resolved', label: 'Resolved' },
+            { value: 'closed', label: 'Closed' },
+          ] as const).map((item) => (
+            <button
+              key={item.value}
+              type="button"
+              onClick={() => setStatusFilter(item.value)}
+              className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
+                statusFilter === item.value
+                  ? 'bg-amber-500 text-black'
+                  : 'text-zinc-300 hover:bg-zinc-800 hover:text-white'
+              }`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="space-y-3">
         {filteredBugs.length === 0 ? (
-          <div className="rounded-lg border border-zinc-700 bg-zinc-900/40 px-4 py-10 text-center text-zinc-400">
+          <div className="rounded-lg border border-zinc-700 bg-zinc-900/40 px-4 py-6 text-sm text-zinc-400">
             No bug reports found for this filter.
           </div>
         ) : (
           filteredBugs.map((bug) => {
             const isExpanded = expandedBugId === bug.id
-            const reporterName = bug.reporter?.full_name || 'Unknown reporter'
+            const reporterName = bug.reporter_name || bug.reporter_email || 'Unknown reporter'
             const isSavingStatus = savingKey === `${bug.id}:status`
             const isSavingPriority = savingKey === `${bug.id}:priority`
             const isSavingNotes = savingKey === `${bug.id}:admin_notes`
             const notesValue = notesDraftById[bug.id] ?? ''
 
             return (
-              <div
-                key={bug.id}
-                className="overflow-hidden rounded-lg border border-zinc-700/50 bg-zinc-800/50"
-              >
+              <div key={bug.id} className="rounded-lg border border-zinc-700/50 bg-zinc-800/50">
                 <button
                   type="button"
                   onClick={() => setExpandedBugId(isExpanded ? null : bug.id)}
@@ -233,6 +289,7 @@ export function BugsPageClient({ initialBugs, currentUserRole }: Props) {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
+                      <TypeBadge type={bug.type} />
                       <span
                         className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASSES[bug.status]}`}
                       >
@@ -246,9 +303,7 @@ export function BugsPageClient({ initialBugs, currentUserRole }: Props) {
                         </span>
                       )}
                       <ChevronDown
-                        className={`h-4 w-4 text-zinc-400 transition-transform ${
-                          isExpanded ? 'rotate-180' : ''
-                        }`}
+                        className={`h-4 w-4 text-zinc-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
                       />
                     </div>
                   </div>
@@ -262,7 +317,10 @@ export function BugsPageClient({ initialBugs, currentUserRole }: Props) {
                 {isExpanded && (
                   <div className="space-y-4 border-t border-zinc-700/60 px-4 py-4">
                     <div>
-                      <h3 className="text-sm font-medium text-zinc-200">Description</h3>
+                      <h3 className="flex items-center gap-1 text-sm font-medium text-zinc-200">
+                        <MessageSquare className="h-4 w-4" />
+                        Description
+                      </h3>
                       <p className="mt-1 whitespace-pre-wrap text-sm text-zinc-400">
                         {bug.description || 'No description provided.'}
                       </p>
@@ -308,8 +366,8 @@ export function BugsPageClient({ initialBugs, currentUserRole }: Props) {
                     </div>
 
                     {isAdmin ? (
-                      <div className="space-y-3 rounded-lg border border-zinc-700 bg-zinc-900/50 p-4">
-                        <h3 className="text-sm font-semibold text-white">Admin</h3>
+                      <div className="border-t border-zinc-700 pt-4 mt-4">
+                        <p className="mb-3 text-xs uppercase tracking-wider text-zinc-500">Admin</p>
 
                         <div className="grid gap-3 md:grid-cols-2">
                           <div>
@@ -326,7 +384,7 @@ export function BugsPageClient({ initialBugs, currentUserRole }: Props) {
                                 )
                               }
                               disabled={isSavingStatus}
-                              className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white focus:border-amber-500 focus:outline-none"
+                              className="w-full bg-zinc-800 border border-zinc-600 rounded-lg px-3 py-2 text-sm text-white"
                             >
                               <option value="new">New</option>
                               <option value="in_progress">In Progress</option>
@@ -349,7 +407,7 @@ export function BugsPageClient({ initialBugs, currentUserRole }: Props) {
                                 )
                               }
                               disabled={isSavingPriority}
-                              className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white focus:border-amber-500 focus:outline-none"
+                              className="w-full bg-zinc-800 border border-zinc-600 rounded-lg px-3 py-2 text-sm text-white"
                             >
                               <option value="low">Low</option>
                               <option value="medium">Medium</option>
@@ -359,21 +417,18 @@ export function BugsPageClient({ initialBugs, currentUserRole }: Props) {
                           </div>
                         </div>
 
-                        <div>
+                        <div className="mt-3">
                           <label className="mb-1 block text-xs uppercase tracking-wide text-zinc-500">
                             Admin Notes
                           </label>
                           <textarea
                             value={notesValue}
                             onChange={(event) =>
-                              setNotesDraftById((prev) => ({
-                                ...prev,
-                                [bug.id]: event.target.value,
-                              }))
+                              setNotesDraftById((prev) => ({ ...prev, [bug.id]: event.target.value }))
                             }
-                            rows={4}
-                            className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white placeholder:text-zinc-500 focus:border-amber-500 focus:outline-none"
-                            placeholder="Internal notes for the team..."
+                            rows={3}
+                            placeholder="Internal notes..."
+                            className="w-full bg-zinc-800 border border-zinc-600 rounded-lg p-3 text-sm text-white"
                           />
                           <div className="mt-2 flex items-center gap-3">
                             <button
@@ -386,12 +441,12 @@ export function BugsPageClient({ initialBugs, currentUserRole }: Props) {
                                 )
                               }
                               disabled={isSavingNotes || (bug.admin_notes ?? '') === notesValue}
-                              className="rounded-lg bg-amber-500 px-3 py-1.5 text-sm font-medium text-black transition-colors hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-60"
+                              className="rounded bg-zinc-700 px-3 py-1.5 text-xs text-white transition-colors hover:bg-zinc-600 disabled:cursor-not-allowed disabled:opacity-60"
                             >
-                              Save
+                              Save Notes
                             </button>
                             {isSavingStatus || isSavingPriority || isSavingNotes ? (
-                              <span className="text-xs text-zinc-400">Saving changes...</span>
+                              <span className="text-xs text-zinc-400">Saving...</span>
                             ) : null}
                           </div>
                         </div>
