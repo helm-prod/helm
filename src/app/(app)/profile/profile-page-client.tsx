@@ -239,7 +239,7 @@ export default function ProfilePageClient() {
                   type="button"
                   onClick={() => void saveDisplayName()}
                   disabled={nameSaving || !displayName.trim()}
-                  className="rounded-full bg-nex-red px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-nex-redDark disabled:cursor-not-allowed disabled:opacity-60"
+                  className="rounded-full bg-gold-400 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-gold-500 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {nameSaving ? 'Saving...' : 'Save'}
                 </button>
@@ -294,7 +294,7 @@ export default function ProfilePageClient() {
           type="button"
           onClick={() => void changePassword()}
           disabled={passwordSaving || !newPassword || !confirmPassword}
-          className="mt-5 rounded-full bg-nex-red px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-nex-redDark disabled:cursor-not-allowed disabled:opacity-60"
+          className="mt-5 rounded-full bg-gold-400 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-gold-500 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {passwordSaving ? 'Updating...' : 'Update Password'}
         </button>

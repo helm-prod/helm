@@ -451,7 +451,7 @@ export function SpeedDashboard() {
             type="button"
             onClick={handleRefresh}
             disabled={scanning}
-            className="inline-flex items-center gap-2 rounded-lg bg-nex-red px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-nex-redDark disabled:cursor-not-allowed disabled:opacity-70"
+            className="inline-flex items-center gap-2 rounded-lg bg-gold-400 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gold-500 disabled:cursor-not-allowed disabled:opacity-70"
           >
             <RefreshCw className={`h-4 w-4 ${scanning ? 'animate-spin' : ''}`} />
             {scanning ? 'Scanning...' : 'Refresh Data'}
@@ -551,7 +551,7 @@ export function SpeedDashboard() {
             type="button"
             onClick={handleRefresh}
             disabled={scanning}
-            className="mt-6 rounded-lg bg-nex-red px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-nex-redDark disabled:cursor-not-allowed disabled:opacity-70"
+            className="mt-6 rounded-lg bg-gold-400 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-gold-500 disabled:cursor-not-allowed disabled:opacity-70"
           >
             Run First Scan
           </button>

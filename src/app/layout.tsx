@@ -3,8 +3,8 @@ import './globals.css'
 import { AuthSessionListener } from '@/components/auth-session-listener'
 
 export const metadata: Metadata = {
-  title: 'Helm',
-  description: 'Web Production Command Center',
+  title: 'HELM',
+  description: 'Hub for Ecommerce Logistics & Management',
 }
 
 export default function RootLayout({

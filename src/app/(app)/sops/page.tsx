@@ -54,7 +54,7 @@ export default async function SOPsPage() {
         {isAdmin && (
           <Link
             href="/sops/new"
-            className="px-4 py-2.5 bg-nex-red hover:bg-nex-redDark text-white text-sm font-medium rounded-lg transition-colors"
+            className="px-4 py-2.5 bg-gold-400 hover:bg-gold-500 text-white text-sm font-medium rounded-lg transition-colors"
           >
             + Create SOP
           </Link>

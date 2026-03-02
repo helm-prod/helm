@@ -30,7 +30,7 @@ type RenameType = 'file' | 'folder' | 'team-folder'
 type DropTargetType = 'personal-folder' | 'personal-unfiled' | 'team-folder' | 'team-unfiled'
 
 const LANG_ICONS: Record<EditorLanguage, { color: string; label: string }> = {
-  html: { color: 'text-nex-red', label: 'HTML' },
+  html: { color: 'text-gold-400', label: 'HTML' },
   css: { color: 'text-brand-400', label: 'CSS' },
   javascript: { color: 'text-nex-gold', label: 'JS' },
 }
@@ -243,7 +243,7 @@ export function FileSidebar({
         onContextMenu={(e) => handleContextMenu(e, file.id, isTeam ? 'team-file' : 'file')}
         className={`group flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-all duration-150 ${
           isActive
-            ? 'bg-brand-800/80 text-white shadow-[inset_2px_0_0_0_#C8102E]'
+            ? 'bg-brand-800/80 text-white shadow-[inset_2px_0_0_0_#CFA751]'
             : 'text-brand-200 hover:bg-brand-800/40 hover:text-white'
         } ${draggingFileId === file.id ? 'opacity-50' : ''}`}
       >
@@ -295,7 +295,7 @@ export function FileSidebar({
     <div className="flex h-full flex-col border-r border-brand-800 bg-brand-950/80">
       <div className="flex items-center justify-between border-b border-brand-800 px-3 py-3">
         <span className="text-xs font-semibold uppercase tracking-wider text-brand-400">Files</span>
-        <button onClick={() => onCreateFile(null)} className="rounded-md bg-nex-red/90 px-2 py-1 text-xs font-medium text-white transition-colors hover:bg-nex-red" title="New file">+ New</button>
+        <button onClick={() => onCreateFile(null)} className="rounded-md bg-gold-400/90 px-2 py-1 text-xs font-medium text-white transition-colors hover:bg-gold-500" title="New file">+ New</button>
       </div>
 
       <div className="border-b border-brand-800/50 px-3 py-2">

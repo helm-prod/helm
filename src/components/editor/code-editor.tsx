@@ -51,7 +51,7 @@ function defineNexTheme(monaco: Parameters<OnMount>[1]) {
       'editor.inactiveSelectionBackground': '#003A6825',
       'editorLineNumber.foreground': '#1B5D95',
       'editorLineNumber.activeForeground': '#4A9BD9',
-      'editorCursor.foreground': '#C8102E',
+      'editorCursor.foreground': '#CFA751',
       'editor.selectionHighlightBackground': '#003A6830',
       'editorBracketMatch.background': '#003A6840',
       'editorBracketMatch.border': '#4A9BD9',
@@ -151,7 +151,7 @@ export function CodeEditor({ value, language, onChange, onSave, readOnly = false
         loading={
           <div className="flex h-full items-center justify-center bg-[#001425]">
             <div className="flex items-center gap-3">
-              <div className="h-2 w-2 animate-pulse rounded-full bg-nex-red" />
+              <div className="h-2 w-2 animate-pulse rounded-full bg-gold-400" />
               <span className="text-sm text-brand-400">Initializing editor...</span>
             </div>
           </div>

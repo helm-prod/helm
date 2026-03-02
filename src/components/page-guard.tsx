@@ -22,7 +22,7 @@ export async function PageGuard({
           </p>
           <Link
             href="/dashboard"
-            className="mt-6 inline-flex items-center rounded-full bg-nex-red px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-nex-redDark"
+            className="mt-6 inline-flex items-center rounded-full bg-gold-400 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-gold-500"
           >
             Back to Dashboard
           </Link>

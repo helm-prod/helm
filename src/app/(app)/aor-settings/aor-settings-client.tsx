@@ -143,7 +143,7 @@ export function AorSettingsClient({ assignments, producers }: Props) {
         <button
           onClick={handleSave}
           disabled={saving || !hasDirty}
-          className="px-5 py-2.5 bg-nex-red hover:bg-nex-redDark disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
+          className="px-5 py-2.5 bg-gold-400 hover:bg-gold-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
         >
           {saving ? 'Saving...' : 'Save Changes'}
         </button>

@@ -359,7 +359,7 @@ export function AdWeekDetailClient({
             {canEdit && (
               <button
                 onClick={() => setShowAddPanel(true)}
-                className="rounded-full bg-nex-red px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-nex-redDark"
+                className="rounded-full bg-gold-400 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gold-500"
               >
                 Add Panel
               </button>
@@ -546,7 +546,7 @@ export function AdWeekDetailClient({
               <p className="mt-3 text-brand-400">No panels match your current filters.</p>
               <button
                 onClick={() => setShowAddPanel(true)}
-                className="mt-4 rounded-full bg-nex-red px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-nex-redDark"
+                className="mt-4 rounded-full bg-gold-400 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gold-500"
               >
                 Add a Panel
               </button>
@@ -807,7 +807,7 @@ function AddEventModal({
         {error && <p className="rounded-xl border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300">{error}</p>}
 
         <div className="flex items-center gap-3">
-          <button type="submit" disabled={loading} className="rounded-full bg-nex-red px-4 py-2 text-sm font-medium text-white hover:bg-nex-redDark disabled:opacity-50">
+          <button type="submit" disabled={loading} className="rounded-full bg-gold-400 px-4 py-2 text-sm font-medium text-white hover:bg-gold-500 disabled:opacity-50">
             {loading ? 'Adding...' : 'Add Event'}
           </button>
           <button type="button" onClick={onClose} className="text-sm text-brand-400 hover:text-white">
@@ -1172,7 +1172,7 @@ function AddPanelModal({
         {error && <p className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">{error}</p>}
 
         <div className="flex items-center gap-3">
-          <button type="submit" disabled={loading} className="rounded-full bg-nex-red px-4 py-2 text-sm font-medium text-white hover:bg-nex-redDark disabled:opacity-50">
+          <button type="submit" disabled={loading} className="rounded-full bg-gold-400 px-4 py-2 text-sm font-medium text-white hover:bg-gold-500 disabled:opacity-50">
             {loading ? 'Creating...' : 'Create Panel'}
           </button>
           <button type="button" onClick={onClose} className="text-sm text-brand-400 hover:text-white">

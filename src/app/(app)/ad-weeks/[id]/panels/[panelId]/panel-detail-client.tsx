@@ -202,7 +202,7 @@ export function PanelDetailClient({
                 <button
                   onClick={handleSave}
                   disabled={saving}
-                  className="rounded-full bg-nex-red px-4 py-2 text-sm font-medium text-white hover:bg-nex-redDark disabled:opacity-50"
+                  className="rounded-full bg-gold-400 px-4 py-2 text-sm font-medium text-white hover:bg-gold-500 disabled:opacity-50"
                 >
                   {saving ? 'Saving...' : 'Save'}
                 </button>

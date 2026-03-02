@@ -233,7 +233,7 @@ export function Ga4Mapping({ profiles }: Props) {
             type="button"
             onClick={saveForm}
             disabled={saving}
-            className="rounded-lg bg-nex-red px-4 py-2 text-sm font-medium text-white hover:bg-nex-redDark disabled:opacity-60"
+            className="rounded-lg bg-gold-400 px-4 py-2 text-sm font-medium text-white hover:bg-gold-500 disabled:opacity-60"
           >
             {saving ? 'Saving...' : 'Save'}
           </button>

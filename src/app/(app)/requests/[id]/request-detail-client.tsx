@@ -136,7 +136,7 @@ export function RequestDetailClient({ request: initial, profile, producers }: Pr
               <button
                 onClick={handleSave}
                 disabled={saving}
-                className="px-4 py-2 text-sm bg-nex-red hover:bg-nex-redDark disabled:opacity-50 text-white rounded-lg transition-colors"
+                className="px-4 py-2 text-sm bg-gold-400 hover:bg-gold-500 disabled:opacity-50 text-white rounded-lg transition-colors"
               >
                 {saving ? 'Saving...' : 'Save Changes'}
               </button>

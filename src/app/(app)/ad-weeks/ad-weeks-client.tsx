@@ -72,7 +72,7 @@ export function AdWeekCreateButton() {
     return (
       <button
         onClick={() => setOpen(true)}
-        className="px-4 py-2.5 bg-nex-red hover:bg-nex-redDark text-white text-sm font-medium rounded-lg transition-colors"
+        className="px-4 py-2.5 bg-gold-400 hover:bg-gold-500 text-white text-sm font-medium rounded-lg transition-colors"
       >
         + Create Ad Week
       </button>
@@ -142,7 +142,7 @@ export function AdWeekCreateButton() {
           <button
             type="submit"
             disabled={loading}
-            className="px-5 py-2.5 bg-nex-red hover:bg-nex-redDark disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
+            className="px-5 py-2.5 bg-gold-400 hover:bg-gold-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
           >
             {loading ? 'Creating...' : 'Create'}
           </button>

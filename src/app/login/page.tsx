@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
+import { RadarAnimation } from '@/components/radar-animation'
 
 export default function LoginPage() {
   const [isSignUp, setIsSignUp] = useState(false)
@@ -57,19 +58,43 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-nex-navy px-4">
-      <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center gap-2">
-            <LoginAnchorIcon className="h-7 w-7 text-white" />
-            <h1 className="text-3xl font-bold text-white">Helm</h1>
-          </div>
-          <p className="mt-2 text-brand-200">Web Production Command Center</p>
+    <div className="relative min-h-screen overflow-hidden bg-gradient-to-b from-[#0a1628] via-[#0d1f3c] to-[#0a1628]">
+      <div
+        className="pointer-events-none absolute inset-0"
+        style={{
+          backgroundImage:
+            'linear-gradient(rgba(207,167,81,0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(207,167,81,0.08) 1px, transparent 1px)',
+          backgroundSize: '42px 42px',
+        }}
+      />
+
+      <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+        <RadarAnimation size={600} className="opacity-10" />
+      </div>
+
+      <div className="relative z-10 mx-auto flex min-h-screen w-full max-w-xl flex-col items-center justify-center px-4 py-10">
+        <div className="mb-8 flex flex-col items-center text-center">
+          <RadarAnimation size={100} />
+          <h1 className="mt-4 text-[50px] font-extrabold leading-none tracking-[0.18em] text-white">
+            <span className="text-[#CFA751]">H</span>ELM
+          </h1>
+
+          <p className="mt-3 text-[11px] uppercase tracking-[0.18em] text-white/75">
+            <span className="text-[#CFA751]">Hub</span>{' '}
+            <span className="text-white/30">for</span>{' '}
+            <span className="text-[#CFA751]">Ecommerce</span>{' '}
+            <span className="text-[#CFA751]">Logistics</span>{' '}
+            <span className="text-white/30">&amp;</span>{' '}
+            <span className="text-[#CFA751]">Management</span>
+          </p>
+
+          <div className="mt-5 h-px w-72 bg-gradient-to-r from-transparent via-[#CFA751]/70 to-transparent" />
+          <p className="mt-3 text-[10px] uppercase tracking-[0.35em] text-white/40">NEXCOM Web Operations</p>
         </div>
 
-        <div className="rounded-xl border border-brand-200 bg-white p-8 shadow-xl">
-          <h2 className="mb-6 text-xl font-semibold text-nex-ink">
-            {isSignUp ? 'Create an account' : 'Sign in'}
+        <div className="w-full max-w-md rounded-2xl border border-[#CFA751]/15 bg-[#0a1628]/72 p-8 shadow-[0_20px_60px_rgba(0,0,0,0.45)] backdrop-blur-sm">
+          <h2 className="mb-6 text-center text-sm font-semibold uppercase tracking-[0.2em] text-[#CFA751]">
+            {isSignUp ? 'Create account' : 'Sign in'}
           </h2>
 
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -77,7 +102,7 @@ export default function LoginPage() {
               <div>
                 <label
                   htmlFor="fullName"
-                  className="mb-1 block text-sm font-medium text-nex-ink"
+                  className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.14em] text-[#CFA751]/75"
                 >
                   Full Name
                 </label>
@@ -87,37 +112,37 @@ export default function LoginPage() {
                   required={isSignUp}
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
-                  className="w-full rounded-lg border border-brand-200 bg-white px-3 py-2 text-nex-ink placeholder-brand-300 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  className="w-full rounded-lg border border-[#CFA751]/20 bg-[#071121]/85 px-3 py-2.5 text-sm text-white placeholder:text-white/35 focus:border-[#CFA751]/70 focus:outline-none focus:ring-2 focus:ring-[#CFA751]/25"
                   placeholder="Jane Smith"
                 />
               </div>
             )}
 
             <div>
-                <label
-                  htmlFor="email"
-                  className="mb-1 block text-sm font-medium text-nex-ink"
-                >
-                  Email
-                </label>
+              <label
+                htmlFor="email"
+                className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.14em] text-[#CFA751]/75"
+              >
+                Email
+              </label>
               <input
                 id="email"
                 type="email"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full rounded-lg border border-brand-200 bg-white px-3 py-2 text-nex-ink placeholder-brand-300 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                className="w-full rounded-lg border border-[#CFA751]/20 bg-[#071121]/85 px-3 py-2.5 text-sm text-white placeholder:text-white/35 focus:border-[#CFA751]/70 focus:outline-none focus:ring-2 focus:ring-[#CFA751]/25"
                 placeholder="you@company.com"
               />
             </div>
 
             <div>
-                <label
-                  htmlFor="password"
-                  className="mb-1 block text-sm font-medium text-nex-ink"
-                >
-                  Password
-                </label>
+              <label
+                htmlFor="password"
+                className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.14em] text-[#CFA751]/75"
+              >
+                Password
+              </label>
               <input
                 id="password"
                 type="password"
@@ -125,13 +150,13 @@ export default function LoginPage() {
                 minLength={6}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full rounded-lg border border-brand-200 bg-white px-3 py-2 text-nex-ink placeholder-brand-300 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                className="w-full rounded-lg border border-[#CFA751]/20 bg-[#071121]/85 px-3 py-2.5 text-sm text-white placeholder:text-white/35 focus:border-[#CFA751]/70 focus:outline-none focus:ring-2 focus:ring-[#CFA751]/25"
                 placeholder="••••••••"
               />
             </div>
 
             {error && (
-              <div className="text-red-400 text-sm bg-red-400/10 border border-red-400/20 rounded-lg p-3">
+              <div className="rounded-lg border border-rose-400/30 bg-rose-400/10 p-3 text-sm text-rose-200">
                 {error}
               </div>
             )}
@@ -139,7 +164,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full rounded-lg bg-nex-red px-4 py-2.5 font-medium text-white transition-colors hover:bg-nex-redDark disabled:cursor-not-allowed disabled:opacity-50"
+              className="w-full rounded-lg bg-gradient-to-r from-[#CFA751] to-[#B8912E] px-4 py-2.5 text-xs font-extrabold uppercase tracking-[0.14em] text-[#0a1628] transition-opacity hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loading
                 ? 'Please wait...'
@@ -155,7 +180,7 @@ export default function LoginPage() {
                 setIsSignUp(!isSignUp)
                 setError(null)
               }}
-              className="text-sm text-brand-600 transition-colors hover:text-brand-700"
+              className="text-sm text-gold-400 transition-colors hover:text-gold-300"
             >
               {isSignUp
                 ? 'Already have an account? Sign in'
@@ -163,19 +188,11 @@ export default function LoginPage() {
             </button>
           </div>
         </div>
+
+        <p className="mt-8 text-[10px] uppercase tracking-[0.16em] text-white/30">
+          Navy Exchange Command • Authorized Personnel
+        </p>
       </div>
     </div>
-  )
-}
-
-function LoginAnchorIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 3.5a1.75 1.75 0 100 3.5 1.75 1.75 0 000-3.5z" />
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 7v10" />
-      <path strokeLinecap="round" strokeLinejoin="round" d="M7 11h10" />
-      <path strokeLinecap="round" strokeLinejoin="round" d="M4 12.5c0 4 3.6 7 8 7s8-3 8-7" />
-      <path strokeLinecap="round" strokeLinejoin="round" d="M4 12.5l3 2.5M20 12.5l-3 2.5" />
-    </svg>
   )
 }

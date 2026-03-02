@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase/client'
 import { getEffectiveAccess, getUserRole } from '@/lib/permissions'
 import { NAV_ITEMS, formatRoleName } from '@/lib/nav-config'
 import type { Profile, UserRole } from '@/lib/types/database'
+import { MiniRadar } from '@/components/radar-animation'
 
 type IconComponent = ({ className }: { className?: string }) => ReactNode
 
@@ -111,20 +112,25 @@ export function Sidebar({ profile, myQueueCount }: { profile: Profile; myQueueCo
   const isAnalyticsRoute = pathname.startsWith('/analytics/')
   const analyticsHeaderClass = `group flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-sm font-medium transition-colors ${
     isAnalyticsRoute
-      ? 'border-brand-700 bg-nex-navyLight/70 text-white shadow-[inset_4px_0_0_0_#C8102E]'
+      ? 'border-brand-700 bg-nex-navyLight/70 text-white shadow-[inset_4px_0_0_0_#CFA751]'
       : 'border-transparent text-brand-100 hover:border-brand-700 hover:bg-brand-800/70 hover:text-white'
   }`
 
   return (
     <aside className="fixed left-0 top-0 flex h-screen w-64 flex-col border-r border-brand-800 bg-nex-navy">
-      <div className="border-b border-brand-800 p-6">
-        <Link href="/dashboard" className="block">
-          <div className="flex items-center gap-2">
-            <AnchorIcon className="h-5 w-5 text-white" />
-            <h1 className="text-lg font-bold text-white">Helm</h1>
+      {/* Logo */}
+      <div className="px-4 pt-4 pb-3 border-b border-gold-400/10">
+        <div className="flex items-center gap-2.5">
+          <MiniRadar size={36} />
+          <div>
+            <div className="text-lg font-extrabold tracking-[0.15em] text-white leading-none">
+              <span className="text-gold-400">H</span>ELM
+            </div>
+            <div className="text-[8px] text-white/35 tracking-[0.08em] uppercase mt-0.5 font-medium">
+              Ecommerce Logistics & Mgmt
+            </div>
           </div>
-          <p className="mt-0.5 text-xs text-brand-200">Web Production Command Center</p>
-        </Link>
+        </div>
       </div>
 
       <nav className="flex-1 space-y-1 overflow-y-auto p-4">
@@ -137,7 +143,7 @@ export function Sidebar({ profile, myQueueCount }: { profile: Profile; myQueueCo
           const shouldRenderAnalytics = item.slug === 'aor-settings'
           const navItemClass = `group flex items-center justify-between rounded-xl border px-3 py-2.5 text-sm font-medium transition-colors ${
             isActive
-              ? 'border-brand-700 bg-nex-navyLight/70 text-white shadow-[inset_4px_0_0_0_#C8102E]'
+              ? 'border-brand-700 bg-nex-navyLight/70 text-white shadow-[inset_4px_0_0_0_#CFA751]'
               : 'border-transparent text-brand-100 hover:border-brand-700 hover:bg-brand-800/70 hover:text-white'
           }`
 
@@ -154,7 +160,7 @@ export function Sidebar({ profile, myQueueCount }: { profile: Profile; myQueueCo
                 </span>
               </span>
               {item.slug === 'my-queue' && myQueueCount > 0 && (
-                <span className="inline-flex min-w-6 items-center justify-center rounded-full bg-nex-red px-2 py-0.5 text-xs font-semibold text-white">
+                <span className="inline-flex min-w-6 items-center justify-center rounded-full bg-gold-400 px-2 py-0.5 text-xs font-semibold text-white">
                   {myQueueCount}
                 </span>
               )}
@@ -166,7 +172,7 @@ export function Sidebar({ profile, myQueueCount }: { profile: Profile; myQueueCo
                 {item.label}
               </span>
               {item.slug === 'my-queue' && myQueueCount > 0 && (
-                <span className="inline-flex min-w-6 items-center justify-center rounded-full bg-nex-red px-2 py-0.5 text-xs font-semibold text-white">
+                <span className="inline-flex min-w-6 items-center justify-center rounded-full bg-gold-400 px-2 py-0.5 text-xs font-semibold text-white">
                   {myQueueCount}
                 </span>
               )}
@@ -204,7 +210,7 @@ export function Sidebar({ profile, myQueueCount }: { profile: Profile; myQueueCo
                         const SubItemIcon = analyticsItem.Icon
                         const subItemClass = `group flex items-center rounded-xl border px-3 py-2.5 pl-10 text-sm font-medium transition-colors ${
                           subItemActive
-                            ? 'border-brand-700 bg-nex-navyLight/70 text-white shadow-[inset_4px_0_0_0_#C8102E]'
+                            ? 'border-brand-700 bg-nex-navyLight/70 text-white shadow-[inset_4px_0_0_0_#CFA751]'
                             : 'border-transparent text-brand-100 hover:border-brand-700 hover:bg-brand-800/70 hover:text-white'
                         }`
 
@@ -262,18 +268,6 @@ export function Sidebar({ profile, myQueueCount }: { profile: Profile; myQueueCo
         </button>
       </div>
     </aside>
-  )
-}
-
-function AnchorIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 3.5a1.75 1.75 0 100 3.5 1.75 1.75 0 000-3.5z" />
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 7v10" />
-      <path strokeLinecap="round" strokeLinejoin="round" d="M7 11h10" />
-      <path strokeLinecap="round" strokeLinejoin="round" d="M4 12.5c0 4 3.6 7 8 7s8-3 8-7" />
-      <path strokeLinecap="round" strokeLinejoin="round" d="M4 12.5l3 2.5M20 12.5l-3 2.5" />
-    </svg>
   )
 }
 

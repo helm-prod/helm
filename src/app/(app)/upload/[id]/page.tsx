@@ -127,7 +127,7 @@ export default async function UploadResultPage({ params }: { params: { id: strin
           {adWeek?.id && (
             <Link
               href={`/ad-weeks/${adWeek.id}`}
-              className="rounded-full bg-nex-red px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-nex-redDark"
+              className="rounded-full bg-gold-400 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gold-500"
             >
               View Week
             </Link>

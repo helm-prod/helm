@@ -128,7 +128,7 @@ ${companionCss}
   <style>
     body { margin: 0; padding: 16px; font-family: monospace; background: #0a0e17; color: #dee6ee; font-size: 13px; }
     .log-entry { padding: 4px 0; border-bottom: 1px solid #1a2535; }
-    .log-error { color: #C8102E; }
+    .log-error { color: #CFA751; }
     .log-warn { color: #C5960C; }
     #output { white-space: pre-wrap; }
   </style>

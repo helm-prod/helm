@@ -320,7 +320,7 @@ export default function UploadPage() {
             <button
               type="submit"
               disabled={loading || ((uploadMethod === 'file' || isCalendarUpload) && !file) || (uploadMethod === 'google' && !googleSheetUrl.trim())}
-              className="rounded-full bg-nex-red px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-nex-redDark disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-full bg-gold-400 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-gold-500 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loading ? 'Importing...' : isCalendarUpload ? 'Seed Calendar' : 'Run Smart Import'}
             </button>
@@ -348,7 +348,7 @@ export default function UploadPage() {
                   setArchivePrompt(null)
                   void runUpload({ archiveExisting: true })
                 }}
-                className="rounded-full bg-nex-red px-4 py-2 text-sm font-medium text-white hover:bg-nex-redDark"
+                className="rounded-full bg-gold-400 px-4 py-2 text-sm font-medium text-white hover:bg-gold-500"
               >
                 Archive &amp; Import
               </button>

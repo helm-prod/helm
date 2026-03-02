@@ -262,7 +262,7 @@ export function AiInsightCard({ siteMetrics, categoryData, adWeekNumber }: Props
           <button
             type="button"
             onClick={() => void handleGenerate()}
-            className="mt-4 rounded-lg bg-nex-red px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-nex-redDark"
+            className="mt-4 rounded-lg bg-gold-400 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-gold-500"
           >
             Generate Weekly Insight
           </button>

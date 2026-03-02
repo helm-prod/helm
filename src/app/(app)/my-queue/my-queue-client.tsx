@@ -130,7 +130,7 @@ export function MyQueueClient({
         <div className="rounded-2xl border border-brand-800 bg-brand-900 px-6 py-12 text-center">
           <p className="text-4xl text-brand-700">Done</p>
           <p className="mt-3 text-brand-400">No open panels for this filter.</p>
-          <Link href="/ad-weeks" className="mt-4 inline-flex rounded-full bg-nex-red px-4 py-2 text-sm font-medium text-white hover:bg-nex-redDark">
+          <Link href="/ad-weeks" className="mt-4 inline-flex rounded-full bg-gold-400 px-4 py-2 text-sm font-medium text-white hover:bg-gold-500">
             View Ad Weeks
           </Link>
         </div>

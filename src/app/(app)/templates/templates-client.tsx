@@ -340,7 +340,7 @@ export function TemplatesClient({
           <button
             onClick={() => void savePageTemplate(editingPageId || undefined)}
             disabled={savingPage}
-            className="rounded-full bg-nex-red px-4 py-2 text-sm font-medium text-white hover:bg-nex-redDark disabled:cursor-not-allowed disabled:opacity-60"
+            className="rounded-full bg-gold-400 px-4 py-2 text-sm font-medium text-white hover:bg-gold-500 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {savingPage ? 'Saving...' : editingPageId ? 'Save Page Template' : 'Add Page Template'}
           </button>
@@ -661,7 +661,7 @@ function TemplateEditorModal({
               <button
                 onClick={() => void saveTemplate()}
                 disabled={saving}
-                className="w-full rounded-full bg-nex-red px-3 py-2 text-xs font-medium text-white hover:bg-nex-redDark disabled:cursor-not-allowed disabled:opacity-60"
+                className="w-full rounded-full bg-gold-400 px-3 py-2 text-xs font-medium text-white hover:bg-gold-500 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {saving ? 'Saving...' : 'Save Template'}
               </button>

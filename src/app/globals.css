@@ -8,11 +8,11 @@
   }
 
   a {
-    @apply text-nex-link;
+    @apply text-gold-400;
   }
 
   a:hover {
-    @apply text-brand-300;
+    @apply text-gold-300;
   }
 
   /* Scrollbar styling */
