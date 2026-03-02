@@ -1,44 +1,62 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { useRouter } from 'next/navigation'
-import { Bug, ChevronDown, Clock, Lightbulb, MessageSquare, Monitor, User } from 'lucide-react'
+import {
+  Bug,
+  ChevronDown,
+  Clock,
+  ExternalLink,
+  Globe,
+  Inbox,
+  Lightbulb,
+  Monitor,
+  Shield,
+  User,
+} from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
-import type { BugReport } from '@/lib/types/database'
+
+interface BugWithReporter {
+  id: string
+  reporter_id: string
+  title: string
+  description: string | null
+  screenshot_url: string | null
+  page_url: string
+  page_title: string | null
+  user_agent: string | null
+  viewport: string | null
+  type: 'bug' | 'feature_request'
+  status: 'new' | 'in_progress' | 'resolved' | 'closed'
+  priority: 'low' | 'medium' | 'high' | 'critical'
+  admin_notes: string | null
+  created_at: string
+  updated_at: string
+  reporter_name: string
+}
+
+interface BugsPageClientProps {
+  bugs: BugWithReporter[]
+  isAdmin: boolean
+  currentUserId: string
+}
+
+type StatusFilter = 'all' | BugWithReporter['status']
+type TypeFilter = 'all' | BugWithReporter['type']
 
 const RELATIVE_TIME_FORMATTER = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
 
-type StatusFilter = 'all' | BugReport['status']
-type TypeFilter = 'all' | BugReport['type']
-type Toast = {
-  tone: 'success' | 'error'
-  message: string
-}
-
-export type BugReportWithReporter = BugReport & {
-  reporter_name: string | null
-  reporter_email: string | null
-}
-
-const STATUS_LABELS: Record<BugReport['status'], string> = {
+const STATUS_LABELS: Record<BugWithReporter['status'], string> = {
   new: 'New',
   in_progress: 'In Progress',
   resolved: 'Resolved',
   closed: 'Closed',
 }
 
-const STATUS_BADGE_CLASSES: Record<BugReport['status'], string> = {
-  new: 'border-red-500/30 bg-red-500/10 text-red-300',
-  in_progress: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
-  resolved: 'border-green-500/30 bg-green-500/10 text-green-300',
-  closed: 'border-zinc-500/30 bg-zinc-500/10 text-zinc-300',
-}
-
-const PRIORITY_BADGE_CLASSES: Record<BugReport['priority'], string> = {
-  low: 'border-zinc-500/30 bg-zinc-500/10 text-zinc-300',
-  medium: 'border-zinc-500/30 bg-zinc-500/10 text-zinc-300',
-  high: 'border-orange-500/30 bg-orange-500/10 text-orange-300',
-  critical: 'border-red-500/30 bg-red-500/10 text-red-300',
+const STATUS_BADGE_STYLES: Record<BugWithReporter['status'], string> = {
+  new: 'bg-red-500/10 text-red-400',
+  in_progress: 'bg-amber-500/10 text-amber-400',
+  resolved: 'bg-green-500/10 text-green-400',
+  closed: 'bg-zinc-700/50 text-zinc-400',
 }
 
 function formatRelativeTime(isoString: string) {
@@ -58,71 +76,139 @@ function formatRelativeTime(isoString: string) {
   return RELATIVE_TIME_FORMATTER.format(Math.round(diffSeconds / 31536000), 'year')
 }
 
-type Props = {
-  initialBugs: BugReportWithReporter[]
-  isAdmin: boolean
+function formatSubmittedDate(isoString: string) {
+  const parsed = new Date(isoString)
+  if (Number.isNaN(parsed.getTime())) return 'Unknown'
+  return parsed.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
 }
 
-function TypeBadge({ type }: { type: BugReport['type'] }) {
-  if (type === 'feature_request') {
+function getPathPreview(pageUrl: string) {
+  try {
+    const parsed = new URL(pageUrl)
+    const pathOnly = `${parsed.pathname}${parsed.search}`
+    if (!pathOnly) return '/'
+    return pathOnly.length > 40 ? `${pathOnly.slice(0, 40)}...` : pathOnly
+  } catch {
+    return pageUrl.length > 40 ? `${pageUrl.slice(0, 40)}...` : pageUrl
+  }
+}
+
+function parseBrowserName(userAgent: string | null) {
+  if (!userAgent) return 'Unknown'
+
+  const chromeMatch = userAgent.match(/Chrome\/([\d.]+)/)
+  if (chromeMatch && !/Edg\//.test(userAgent)) {
+    return `Chrome ${chromeMatch[1]}`
+  }
+
+  const firefoxMatch = userAgent.match(/Firefox\/([\d.]+)/)
+  if (firefoxMatch) {
+    return `Firefox ${firefoxMatch[1]}`
+  }
+
+  const safariMatch = userAgent.match(/Version\/([\d.]+).*Safari/)
+  if (safariMatch) {
+    return `Safari ${safariMatch[1]}`
+  }
+
+  return 'Unknown'
+}
+
+function EmptyState({ typeFilter, statusFilter }: { typeFilter: TypeFilter; statusFilter: StatusFilter }) {
+  let TitleIcon = Inbox
+  let title = 'No reports match this filter'
+
+  if (typeFilter === 'bug' && statusFilter === 'all') {
+    TitleIcon = Bug
+    title = 'No bug reports yet'
+  } else if (typeFilter === 'feature_request' && statusFilter === 'all') {
+    TitleIcon = Lightbulb
+    title = 'No feature requests yet'
+  } else if (typeFilter === 'bug') {
+    TitleIcon = Bug
+    title = 'No bug reports match this filter'
+  } else if (typeFilter === 'feature_request') {
+    TitleIcon = Lightbulb
+    title = 'No feature requests match this filter'
+  }
+
+  return (
+    <div className="py-16 flex flex-col items-center">
+      <TitleIcon className="h-12 w-12 text-zinc-700" />
+      <p className="mt-4 font-medium text-zinc-400">{title}</p>
+      <p className="mt-1 text-sm text-zinc-500">Reports submitted via the bug button will appear here.</p>
+    </div>
+  )
+}
+
+function PriorityBadge({ priority }: { priority: BugWithReporter['priority'] }) {
+  if (priority === 'medium') return null
+
+  if (priority === 'critical') {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full border border-purple-500/20 bg-purple-500/10 px-2 py-0.5 text-xs font-medium text-purple-400">
-        <Lightbulb className="h-3 w-3" />
-        Feature
+      <span className="animate-pulse rounded-full bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-400">
+        critical
+      </span>
+    )
+  }
+
+  if (priority === 'high') {
+    return (
+      <span className="rounded-full bg-orange-500/10 px-2 py-0.5 text-xs font-medium text-orange-400">
+        high
       </span>
     )
   }
 
   return (
-    <span className="inline-flex items-center gap-1 rounded-full border border-red-500/20 bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-400">
-      <Bug className="h-3 w-3" />
-      Bug
+    <span className="rounded-full bg-zinc-700/50 px-2 py-0.5 text-xs font-medium text-zinc-500">
+      low
     </span>
   )
 }
 
-export function BugsPageClient({ initialBugs, isAdmin }: Props) {
+export default function BugsPageClient({ bugs, isAdmin, currentUserId }: BugsPageClientProps) {
   const supabase = useMemo(() => createClient(), [])
-  const router = useRouter()
 
-  const [bugs, setBugs] = useState<BugReportWithReporter[]>(initialBugs)
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [bugRows, setBugRows] = useState<BugWithReporter[]>(bugs)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all')
-  const [expandedBugId, setExpandedBugId] = useState<string | null>(null)
-  const [savingKey, setSavingKey] = useState<string | null>(null)
-  const [toast, setToast] = useState<Toast | null>(null)
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [notesDraftById, setNotesDraftById] = useState<Record<string, string>>(() =>
-    initialBugs.reduce<Record<string, string>>((acc, bug) => {
+    bugs.reduce<Record<string, string>>((acc, bug) => {
       acc[bug.id] = bug.admin_notes ?? ''
       return acc
     }, {}),
   )
+  const [savedByBugId, setSavedByBugId] = useState<Record<string, boolean>>({})
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
-  function showToast(tone: Toast['tone'], message: string) {
-    setToast({ tone, message })
-    window.setTimeout(() => setToast(null), 2200)
-  }
-
-  const filteredBugs = useMemo(() => {
-    return bugs.filter((bug) => {
-      const statusMatches = statusFilter === 'all' || bug.status === statusFilter
-      const typeMatches = typeFilter === 'all' || bug.type === typeFilter
-      return statusMatches && typeMatches
+  const filteredRows = useMemo(() => {
+    return bugRows.filter((bug) => {
+      const matchesType = typeFilter === 'all' || bug.type === typeFilter
+      const matchesStatus = statusFilter === 'all' || bug.status === statusFilter
+      return matchesType && matchesStatus
     })
-  }, [bugs, statusFilter, typeFilter])
+  }, [bugRows, statusFilter, typeFilter])
 
   const statusCounts = useMemo(() => {
-    return bugs.reduce(
+    return bugRows.reduce(
       (acc, bug) => {
         acc[bug.status] += 1
         return acc
       },
       { new: 0, in_progress: 0, resolved: 0, closed: 0 },
     )
-  }, [bugs])
+  }, [bugRows])
 
   const typeCounts = useMemo(() => {
-    return bugs.reduce(
+    return bugRows.reduce(
       (acc, bug) => {
         if (bug.type === 'feature_request') {
           acc.feature_request += 1
@@ -133,21 +219,35 @@ export function BugsPageClient({ initialBugs, isAdmin }: Props) {
       },
       { bug: 0, feature_request: 0 },
     )
-  }, [bugs])
+  }, [bugRows])
+
+  function markSaved(bugId: string) {
+    setSavedByBugId((prev) => ({ ...prev, [bugId]: true }))
+    window.setTimeout(() => {
+      setSavedByBugId((prev) => {
+        if (!prev[bugId]) return prev
+        const next = { ...prev }
+        delete next[bugId]
+        return next
+      })
+    }, 2000)
+  }
+
+  function showError(message: string) {
+    setErrorMessage(message)
+    window.setTimeout(() => setErrorMessage(null), 2500)
+  }
 
   async function updateBug(
     bugId: string,
-    patch: Partial<Pick<BugReport, 'status' | 'priority' | 'admin_notes'>>,
-    successMessage: string,
+    patch: Partial<Pick<BugWithReporter, 'status' | 'priority' | 'admin_notes'>>,
   ) {
-    const previousBug = bugs.find((bug) => bug.id === bugId)
-    if (!previousBug) return
+    const previous = bugRows.find((bug) => bug.id === bugId)
+    if (!previous) return
 
     const nextUpdatedAt = new Date().toISOString()
-    const patchKey = Object.keys(patch).join('-')
-    setSavingKey(`${bugId}:${patchKey}`)
 
-    setBugs((prev) =>
+    setBugRows((prev) =>
       prev.map((bug) => (bug.id === bugId ? { ...bug, ...patch, updated_at: nextUpdatedAt } : bug)),
     )
 
@@ -157,234 +257,246 @@ export function BugsPageClient({ initialBugs, isAdmin }: Props) {
       .eq('id', bugId)
 
     if (error) {
-      setBugs((prev) => prev.map((bug) => (bug.id === bugId ? previousBug : bug)))
-      showToast('error', 'Could not save admin update.')
-      setSavingKey(null)
+      setBugRows((prev) => prev.map((bug) => (bug.id === bugId ? previous : bug)))
+      showError('Unable to save changes. Please try again.')
       return
     }
 
-    showToast('success', successMessage)
-    router.refresh()
-    setSavingKey(null)
+    markSaved(bugId)
   }
 
   return (
-    <div className="w-full space-y-6">
-      {toast && (
-        <div
-          className={`fixed right-6 top-6 z-50 rounded-lg border px-3 py-2 text-sm shadow-lg ${
-            toast.tone === 'success'
-              ? 'border-emerald-500/30 bg-emerald-500/15 text-emerald-200'
-              : 'border-red-500/30 bg-red-500/15 text-red-200'
-          }`}
-        >
-          {toast.message}
+    <div className="space-y-6">
+      {errorMessage ? (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+          {errorMessage}
         </div>
-      )}
+      ) : null}
 
-      <div className="space-y-3">
-        <h1 className="flex items-center gap-2 text-2xl font-bold text-white">
-          <Bug className="h-6 w-6 text-amber-400" />
-          Bug Reports
-        </h1>
-        <div className="flex flex-wrap gap-2">
-          <span className="inline-flex items-center rounded-full border border-red-500/30 bg-red-500/10 px-3 py-1 text-xs font-medium text-red-300">
-            New: {statusCounts.new}
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <h1 className="flex items-center gap-2 text-2xl font-semibold text-white">
+            <Bug className="h-6 w-6 text-amber-400" />
+            Bug Reports
+          </h1>
+          <p className="mt-1 text-sm text-zinc-400">Track bugs and feature requests across Helm</p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded-full bg-red-500/10 px-2 py-1 text-xs font-medium text-red-400">
+            New {statusCounts.new}
           </span>
-          <span className="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-300">
-            In Progress: {statusCounts.in_progress}
+          <span className="rounded-full bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-400">
+            In Progress {statusCounts.in_progress}
           </span>
-          <span className="inline-flex items-center rounded-full border border-green-500/30 bg-green-500/10 px-3 py-1 text-xs font-medium text-green-300">
-            Resolved: {statusCounts.resolved}
+          <span className="rounded-full bg-green-500/10 px-2 py-1 text-xs font-medium text-green-400">
+            Resolved {statusCounts.resolved}
           </span>
-          <span className="inline-flex items-center rounded-full border border-zinc-500/30 bg-zinc-500/10 px-3 py-1 text-xs font-medium text-zinc-300">
-            Closed: {statusCounts.closed}
+          <span className="rounded-full bg-zinc-700/50 px-2 py-1 text-xs font-medium text-zinc-400">
+            Closed {statusCounts.closed}
           </span>
-          <span className="inline-flex items-center rounded-full border border-zinc-700 bg-zinc-800/70 px-3 py-1 text-xs font-medium text-zinc-300">
-            {typeCounts.bug} Bugs · {typeCounts.feature_request} Feature Requests
+          <span className="text-zinc-600">|</span>
+          <span className="inline-flex items-center gap-1 rounded-full bg-red-500/10 px-2 py-1 text-xs font-medium text-red-400">
+            <Bug className="h-3 w-3" />
+            {typeCounts.bug}
+          </span>
+          <span className="inline-flex items-center gap-1 rounded-full bg-purple-500/10 px-2 py-1 text-xs font-medium text-purple-400">
+            <Lightbulb className="h-3 w-3" />
+            {typeCounts.feature_request}
           </span>
         </div>
       </div>
 
-      <div className="space-y-2 rounded-lg border border-zinc-700 bg-zinc-900/60 p-2">
-        <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-zinc-700/60 bg-zinc-900/40 p-2">
+        <div className="flex flex-wrap items-center gap-1">
           {([
-            { value: 'all', label: 'All Types' },
+            { value: 'all', label: 'All' },
             { value: 'bug', label: 'Bugs' },
-            { value: 'feature_request', label: 'Feature Requests' },
-          ] as const).map((item) => (
+            { value: 'feature_request', label: 'Features' },
+          ] as const).map((option) => (
             <button
-              key={item.value}
+              key={option.value}
               type="button"
-              onClick={() => setTypeFilter(item.value)}
-              className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
-                typeFilter === item.value
-                  ? 'bg-amber-500 text-black'
-                  : 'text-zinc-300 hover:bg-zinc-800 hover:text-white'
+              onClick={() => setTypeFilter(option.value)}
+              className={`cursor-pointer rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                typeFilter === option.value
+                  ? 'bg-zinc-700 text-white'
+                  : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200'
               }`}
             >
-              {item.label}
+              {option.label}
             </button>
           ))}
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="mx-3 h-5 self-center border-l border-zinc-700" />
+
+        <div className="flex flex-wrap items-center gap-1">
           {([
             { value: 'all', label: 'All' },
             { value: 'new', label: 'New' },
             { value: 'in_progress', label: 'In Progress' },
             { value: 'resolved', label: 'Resolved' },
             { value: 'closed', label: 'Closed' },
-          ] as const).map((item) => (
+          ] as const).map((option) => (
             <button
-              key={item.value}
+              key={option.value}
               type="button"
-              onClick={() => setStatusFilter(item.value)}
-              className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
-                statusFilter === item.value
-                  ? 'bg-amber-500 text-black'
-                  : 'text-zinc-300 hover:bg-zinc-800 hover:text-white'
+              onClick={() => setStatusFilter(option.value)}
+              className={`cursor-pointer rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                statusFilter === option.value
+                  ? 'bg-zinc-700 text-white'
+                  : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200'
               }`}
             >
-              {item.label}
+              {option.label}
             </button>
           ))}
         </div>
       </div>
 
-      <div className="space-y-3">
-        {filteredBugs.length === 0 ? (
-          <div className="rounded-lg border border-zinc-700 bg-zinc-900/40 px-4 py-6 text-sm text-zinc-400">
-            No bug reports found for this filter.
-          </div>
+      <div className="space-y-2">
+        {filteredRows.length === 0 ? (
+          <EmptyState typeFilter={typeFilter} statusFilter={statusFilter} />
         ) : (
-          filteredBugs.map((bug) => {
-            const isExpanded = expandedBugId === bug.id
-            const reporterName = bug.reporter_name || bug.reporter_email || 'Unknown reporter'
-            const isSavingStatus = savingKey === `${bug.id}:status`
-            const isSavingPriority = savingKey === `${bug.id}:priority`
-            const isSavingNotes = savingKey === `${bug.id}:admin_notes`
-            const notesValue = notesDraftById[bug.id] ?? ''
+          filteredRows.map((bug) => {
+            const isExpanded = expandedId === bug.id
+            const reporterLabel = bug.reporter_id === currentUserId ? 'You' : bug.reporter_name
+            const browser = parseBrowserName(bug.user_agent)
 
             return (
-              <div key={bug.id} className="rounded-lg border border-zinc-700/50 bg-zinc-800/50">
+              <div
+                key={bug.id}
+                className="cursor-pointer rounded-xl border border-zinc-700/50 bg-zinc-800/40 p-4 transition-all hover:border-zinc-600/50 hover:bg-zinc-800/60"
+              >
                 <button
                   type="button"
-                  onClick={() => setExpandedBugId(isExpanded ? null : bug.id)}
-                  className="w-full p-4 text-left hover:bg-zinc-800/70"
+                  onClick={() => setExpandedId(isExpanded ? null : bug.id)}
+                  className="w-full text-left"
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate font-medium text-white">{bug.title}</p>
-                      <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-zinc-400">
-                        <span className="inline-flex items-center gap-1">
-                          <User className="h-3.5 w-3.5" />
-                          {reporterName}
-                        </span>
-                        <span>·</span>
-                        <span className="inline-flex items-center gap-1">
-                          <Clock className="h-3.5 w-3.5" />
-                          {formatRelativeTime(bug.created_at)}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <TypeBadge type={bug.type} />
-                      <span
-                        className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASSES[bug.status]}`}
-                      >
-                        {STATUS_LABELS[bug.status]}
-                      </span>
-                      {bug.priority !== 'medium' && (
-                        <span
-                          className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${PRIORITY_BADGE_CLASSES[bug.priority]}`}
-                        >
-                          {bug.priority}
-                        </span>
-                      )}
-                      <ChevronDown
-                        className={`h-4 w-4 text-zinc-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
-                      />
-                    </div>
+                  <div className="flex items-center gap-3">
+                    {bug.type === 'feature_request' ? (
+                      <Lightbulb className="h-4 w-4 text-purple-400" />
+                    ) : (
+                      <Bug className="h-4 w-4 text-red-400" />
+                    )}
+                    <p className="flex-1 truncate text-sm font-medium text-white">{bug.title}</p>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_STYLES[bug.status]}`}
+                    >
+                      {STATUS_LABELS[bug.status]}
+                    </span>
+                    <PriorityBadge priority={bug.priority} />
+                    <ChevronDown
+                      className={`h-4 w-4 text-zinc-500 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                    />
                   </div>
 
-                  <p className="mt-2 truncate text-xs text-zinc-500">{bug.page_url}</p>
-                  {bug.description ? (
-                    <p className="mt-2 line-clamp-2 text-sm text-zinc-400">{bug.description}</p>
-                  ) : null}
+                  <div className="mt-2 flex items-center gap-2 text-xs text-zinc-500">
+                    <span className="inline-flex items-center gap-1">
+                      <User className="h-3 w-3" />
+                      {reporterLabel}
+                    </span>
+                    <span>·</span>
+                    <span className="inline-flex items-center gap-1">
+                      <Clock className="h-3 w-3" />
+                      {formatRelativeTime(bug.created_at)}
+                    </span>
+                    <span>·</span>
+                    <span className="truncate">{getPathPreview(bug.page_url)}</span>
+                  </div>
                 </button>
 
-                {isExpanded && (
-                  <div className="space-y-4 border-t border-zinc-700/60 px-4 py-4">
-                    <div>
-                      <h3 className="flex items-center gap-1 text-sm font-medium text-zinc-200">
-                        <MessageSquare className="h-4 w-4" />
-                        Description
-                      </h3>
-                      <p className="mt-1 whitespace-pre-wrap text-sm text-zinc-400">
-                        {bug.description || 'No description provided.'}
-                      </p>
-                    </div>
+                {isExpanded ? (
+                  <div className="mt-4 border-t border-zinc-700/50 pt-4">
+                    <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+                      <div className="lg:col-span-2">
+                        <div>
+                          <p className="mb-2 text-xs uppercase tracking-wider text-zinc-500">Description</p>
+                          {bug.description ? (
+                            <p className="whitespace-pre-wrap text-sm text-zinc-300">{bug.description}</p>
+                          ) : (
+                            <p className="text-sm italic text-zinc-500">No description provided.</p>
+                          )}
+                        </div>
 
-                    <div>
-                      <h3 className="text-sm font-medium text-zinc-200">Screenshot</h3>
-                      {bug.screenshot_url ? (
-                        <a
-                          href={bug.screenshot_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="mt-2 block overflow-hidden rounded-lg border border-zinc-700"
-                        >
-                          <img
-                            src={bug.screenshot_url}
-                            alt="Bug screenshot"
-                            className="max-h-72 w-full object-contain"
-                          />
-                        </a>
-                      ) : (
-                        <p className="mt-1 text-sm text-zinc-400">No screenshot available.</p>
-                      )}
-                    </div>
-
-                    <div className="grid gap-3 md:grid-cols-2">
-                      <div className="rounded-lg border border-zinc-700 bg-zinc-900/60 p-3">
-                        <p className="text-xs uppercase tracking-wide text-zinc-500">Page Title</p>
-                        <p className="mt-1 text-sm text-zinc-200">{bug.page_title || 'Unknown'}</p>
+                        {bug.screenshot_url ? (
+                          <div className="mt-5">
+                            <p className="mb-2 text-xs uppercase tracking-wider text-zinc-500">Screenshot</p>
+                            <img
+                              src={bug.screenshot_url}
+                              alt="Bug screenshot"
+                              className="max-h-64 cursor-pointer rounded-lg border border-zinc-700 object-contain"
+                              onClick={() => window.open(bug.screenshot_url!, '_blank')}
+                            />
+                          </div>
+                        ) : null}
                       </div>
-                      <div className="rounded-lg border border-zinc-700 bg-zinc-900/60 p-3">
-                        <p className="flex items-center gap-1 text-xs uppercase tracking-wide text-zinc-500">
-                          <Monitor className="h-3.5 w-3.5" />
-                          Viewport
-                        </p>
-                        <p className="mt-1 text-sm text-zinc-200">{bug.viewport || 'Unknown'}</p>
-                      </div>
-                    </div>
 
-                    <div className="rounded-lg border border-zinc-700 bg-zinc-900/60 p-3">
-                      <p className="text-xs uppercase tracking-wide text-zinc-500">User Agent</p>
-                      <p className="mt-1 break-all text-sm text-zinc-300">{bug.user_agent || 'Unknown'}</p>
+                      <div className="lg:col-span-1">
+                        <div className="space-y-4 rounded-lg bg-zinc-900/50 p-4">
+                          <div>
+                            <p className="text-xs uppercase tracking-wider text-zinc-500">Status</p>
+                            <p className="mt-1 text-sm text-zinc-200">{STATUS_LABELS[bug.status]}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs uppercase tracking-wider text-zinc-500">Priority</p>
+                            <p className="mt-1 text-sm text-zinc-200">{bug.priority}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs uppercase tracking-wider text-zinc-500">Reporter</p>
+                            <p className="mt-1 text-sm text-zinc-200">{reporterLabel}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs uppercase tracking-wider text-zinc-500">Submitted</p>
+                            <p className="mt-1 text-sm text-zinc-200">{formatSubmittedDate(bug.created_at)}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs uppercase tracking-wider text-zinc-500">Page</p>
+                            <a
+                              href={bug.page_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-1 inline-flex items-start gap-1 break-all text-xs text-amber-400 hover:underline"
+                            >
+                              <Globe className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                              <span>{bug.page_url}</span>
+                              <ExternalLink className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                            </a>
+                          </div>
+                          <div>
+                            <p className="text-xs uppercase tracking-wider text-zinc-500">Viewport</p>
+                            <p className="mt-1 inline-flex items-center gap-1 text-sm text-zinc-200">
+                              <Monitor className="h-3.5 w-3.5" />
+                              {bug.viewport || 'Unknown'}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-xs uppercase tracking-wider text-zinc-500">Browser</p>
+                            <p className="mt-1 text-sm text-zinc-200">{browser}</p>
+                          </div>
+                        </div>
+                      </div>
                     </div>
 
                     {isAdmin ? (
-                      <div className="border-t border-zinc-700 pt-4 mt-4">
-                        <p className="mb-3 text-xs uppercase tracking-wider text-zinc-500">Admin</p>
+                      <div className="mt-6 border-t border-zinc-700/50 pt-6">
+                        <div className="flex items-center gap-2">
+                          <Shield className="h-4 w-4 text-amber-400" />
+                          <p className="text-sm font-medium text-zinc-300">Admin Controls</p>
+                        </div>
 
-                        <div className="grid gap-3 md:grid-cols-2">
+                        <div className="mt-3 flex flex-wrap items-start gap-4">
                           <div>
-                            <label className="mb-1 block text-xs uppercase tracking-wide text-zinc-500">
-                              Status
-                            </label>
+                            <label className="mb-1 block text-xs text-zinc-500">Status</label>
                             <select
                               value={bug.status}
                               onChange={(event) =>
-                                void updateBug(
-                                  bug.id,
-                                  { status: event.target.value as BugReport['status'] },
-                                  'Status updated.',
-                                )
+                                void updateBug(bug.id, {
+                                  status: event.target.value as BugWithReporter['status'],
+                                })
                               }
-                              disabled={isSavingStatus}
-                              className="w-full bg-zinc-800 border border-zinc-600 rounded-lg px-3 py-2 text-sm text-white"
+                              className="rounded-lg border border-zinc-600 bg-zinc-800 px-3 py-2 text-sm text-white focus:border-amber-500/50 focus:outline-none"
                             >
                               <option value="new">New</option>
                               <option value="in_progress">In Progress</option>
@@ -394,20 +506,15 @@ export function BugsPageClient({ initialBugs, isAdmin }: Props) {
                           </div>
 
                           <div>
-                            <label className="mb-1 block text-xs uppercase tracking-wide text-zinc-500">
-                              Priority
-                            </label>
+                            <label className="mb-1 block text-xs text-zinc-500">Priority</label>
                             <select
                               value={bug.priority}
                               onChange={(event) =>
-                                void updateBug(
-                                  bug.id,
-                                  { priority: event.target.value as BugReport['priority'] },
-                                  'Priority updated.',
-                                )
+                                void updateBug(bug.id, {
+                                  priority: event.target.value as BugWithReporter['priority'],
+                                })
                               }
-                              disabled={isSavingPriority}
-                              className="w-full bg-zinc-800 border border-zinc-600 rounded-lg px-3 py-2 text-sm text-white"
+                              className="rounded-lg border border-zinc-600 bg-zinc-800 px-3 py-2 text-sm text-white focus:border-amber-500/50 focus:outline-none"
                             >
                               <option value="low">Low</option>
                               <option value="medium">Medium</option>
@@ -415,64 +522,39 @@ export function BugsPageClient({ initialBugs, isAdmin }: Props) {
                               <option value="critical">Critical</option>
                             </select>
                           </div>
-                        </div>
 
-                        <div className="mt-3">
-                          <label className="mb-1 block text-xs uppercase tracking-wide text-zinc-500">
-                            Admin Notes
-                          </label>
-                          <textarea
-                            value={notesValue}
-                            onChange={(event) =>
-                              setNotesDraftById((prev) => ({ ...prev, [bug.id]: event.target.value }))
-                            }
-                            rows={3}
-                            placeholder="Internal notes..."
-                            className="w-full bg-zinc-800 border border-zinc-600 rounded-lg p-3 text-sm text-white"
-                          />
-                          <div className="mt-2 flex items-center gap-3">
+                          <div className="min-w-[200px] flex-1">
+                            <label className="mb-1 block text-xs text-zinc-500">Admin Notes</label>
+                            <textarea
+                              rows={2}
+                              placeholder="Internal notes..."
+                              value={notesDraftById[bug.id] ?? ''}
+                              onChange={(event) =>
+                                setNotesDraftById((prev) => ({ ...prev, [bug.id]: event.target.value }))
+                              }
+                              className="w-full rounded-lg border border-zinc-600 bg-zinc-800 p-3 text-sm text-white"
+                            />
                             <button
                               type="button"
                               onClick={() =>
-                                void updateBug(
-                                  bug.id,
-                                  { admin_notes: notesValue.trim() || null },
-                                  'Admin notes saved.',
-                                )
+                                void updateBug(bug.id, {
+                                  admin_notes: (notesDraftById[bug.id] ?? '').trim() || null,
+                                })
                               }
-                              disabled={isSavingNotes || (bug.admin_notes ?? '') === notesValue}
-                              className="rounded bg-zinc-700 px-3 py-1.5 text-xs text-white transition-colors hover:bg-zinc-600 disabled:cursor-not-allowed disabled:opacity-60"
+                              className="mt-2 rounded-lg bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-400 transition-colors hover:bg-amber-500/20"
                             >
                               Save Notes
                             </button>
-                            {isSavingStatus || isSavingPriority || isSavingNotes ? (
-                              <span className="text-xs text-zinc-400">Saving...</span>
-                            ) : null}
                           </div>
                         </div>
+
+                        {savedByBugId[bug.id] ? (
+                          <p className="mt-3 text-xs text-green-400 transition-opacity">Saved</p>
+                        ) : null}
                       </div>
-                    ) : (
-                      <div className="rounded-lg border border-zinc-700 bg-zinc-900/50 p-4 text-sm text-zinc-300">
-                        <p>
-                          Status:{' '}
-                          <span
-                            className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASSES[bug.status]}`}
-                          >
-                            {STATUS_LABELS[bug.status]}
-                          </span>
-                        </p>
-                        <p className="mt-2">
-                          Priority:{' '}
-                          <span
-                            className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${PRIORITY_BADGE_CLASSES[bug.priority]}`}
-                          >
-                            {bug.priority}
-                          </span>
-                        </p>
-                      </div>
-                    )}
+                    ) : null}
                   </div>
-                )}
+                ) : null}
               </div>
             )
           })

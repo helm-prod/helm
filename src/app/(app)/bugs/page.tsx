@@ -1,10 +1,9 @@
-import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import { PageGuard } from '@/components/page-guard'
-import { BugsPageClient, type BugReportWithReporter } from '@/components/bugs/bugs-page-client'
+import { redirect } from 'next/navigation'
+import BugsPageClient from '@/components/bugs/bugs-page-client'
 
 export default async function BugsPage() {
-  const supabase = createClient()
+  const supabase = await createClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()
@@ -19,27 +18,40 @@ export default async function BugsPage() {
     .eq('id', user.id)
     .single()
 
-  if (!profile) {
-    redirect('/login')
-  }
+  const isAdmin = profile?.role === 'admin'
 
-  const { data: bugReports } = await supabase
+  const { data: bugs } = await supabase
     .from('bug_reports')
-    .select('*, reporter:profiles!reporter_id(display_name, email)')
+    .select('*')
     .order('created_at', { ascending: false })
 
-  const bugsWithReporter = (bugReports ?? []).map((bug) => {
-    const reporter = (bug as { reporter?: { display_name?: string | null; email?: string | null } | null }).reporter
-    return {
-      ...(bug as Record<string, unknown>),
-      reporter_name: reporter?.display_name ?? 'Unknown reporter',
-      reporter_email: reporter?.email ?? null,
+  const reporterIds = Array.from(new Set((bugs ?? []).map((bug) => bug.reporter_id).filter(Boolean)))
+  const { data: reporters } = reporterIds.length > 0
+    ? await supabase
+      .from('profiles')
+      .select('id, display_name, email')
+      .in('id', reporterIds)
+    : { data: [] as Array<{ id: string; display_name: string | null; email: string | null }> }
+
+  const reporterMap: Record<string, { display_name: string | null; email: string | null }> = {}
+  for (const reporter of reporters ?? []) {
+    reporterMap[reporter.id] = {
+      display_name: reporter.display_name,
+      email: reporter.email,
     }
-  }) as BugReportWithReporter[]
+  }
+
+  const bugsWithReporters = (bugs ?? []).map((bug) => ({
+    ...bug,
+    reporter_name:
+      reporterMap[bug.reporter_id]?.display_name ||
+      reporterMap[bug.reporter_id]?.email ||
+      'Unknown',
+  }))
 
   return (
-    <PageGuard pageSlug="bugs">
-      <BugsPageClient initialBugs={bugsWithReporter} isAdmin={profile.role === 'admin'} />
-    </PageGuard>
+    <div className="p-6">
+      <BugsPageClient bugs={bugsWithReporters} isAdmin={isAdmin} currentUserId={user.id} />
+    </div>
   )
 }
