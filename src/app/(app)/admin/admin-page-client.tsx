@@ -40,6 +40,38 @@ function ShieldIcon({ className }: { className?: string }) {
   )
 }
 
+function CheckIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 14 14"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path d="M3 7.5l2.2 2.2L11 4.8" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function LockIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 14 14"
+      fill="none"
+      aria-hidden="true"
+    >
+      <rect x="3" y="7" width="8" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
+      <path
+        d="M5 7V5C5 3.34 5.67 2 7 2C8.33 2 9 3.34 9 5V7"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+      />
+    </svg>
+  )
+}
+
 function getRoleDefault(
   pageAccessMap: Map<string, boolean>,
   pageSlug: string,
@@ -476,12 +508,11 @@ export default function AdminPageClient() {
               {accessView === 'matrix' ? (
                 <div className="space-y-4">
                   <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border border-slate-400/5 bg-slate-900/60 px-3 py-2 text-xs text-slate-300/80">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400/70">Legend</span>
                     <span className="inline-flex items-center gap-1">
-                      <span className="text-emerald-400">✓</span> Granted
+                      <CheckIcon className="h-3.5 w-3.5 text-emerald-400" /> Has access
                     </span>
                     <span className="inline-flex items-center gap-1">
-                      <span className="text-slate-500 opacity-50">—</span> Denied
+                      <LockIcon className="h-3.5 w-3.5 text-red-400/60" /> No access
                     </span>
                   </div>
 
@@ -504,8 +535,9 @@ export default function AdminPageClient() {
                                 <span className={`mt-1 inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${roleBadgeClass(user.role)}`}>
                                   {formatRoleName(user.role)}
                                 </span>
-                                <p className="mt-1 text-[11px] font-mono text-emerald-300/90">
-                                  {stats?.granted ?? 0}/{stats?.total ?? NON_ADMIN_PAGES.length}
+                                <p className="mt-1 text-[11px] font-mono">
+                                  <span className="text-emerald-300/95">{stats?.granted ?? 0}</span>
+                                  <span className="text-slate-400/80">/{stats?.total ?? NON_ADMIN_PAGES.length}</span>
                                 </p>
                               </div>
                             </div>
@@ -545,14 +577,14 @@ export default function AdminPageClient() {
                                     className={`flex h-9 w-full items-center justify-center text-xs transition-all duration-150 [transition-timing-function:ease] ${
                                       effective
                                         ? 'bg-emerald-400/5 hover:bg-emerald-400/10'
-                                        : 'bg-transparent hover:bg-slate-300/10'
+                                        : 'bg-red-500/[0.08] hover:bg-red-500/[0.12]'
                                     } ${isSaving ? 'cursor-not-allowed opacity-60' : ''}`}
                                     aria-label={`Set ${page.label} access for ${getUserFullName(user)}`}
                                   >
                                     {effective ? (
-                                      <span className="text-sm leading-none text-emerald-400">✓</span>
+                                      <CheckIcon className="h-3.5 w-3.5 text-emerald-400" />
                                     ) : (
-                                      <span className="text-sm leading-none text-slate-500 opacity-50">—</span>
+                                      <LockIcon className="h-3.5 w-3.5 text-red-400/60" />
                                     )}
                                   </button>
                                 </div>
@@ -607,8 +639,10 @@ export default function AdminPageClient() {
                           <span className={`mt-1 inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${roleBadgeClass(selectedUser.role)}`}>
                             {formatRoleName(selectedUser.role)}
                           </span>
-                          <p className="mt-2 text-xs font-mono text-emerald-300/90">
-                            {userStats.get(selectedUser.id)?.granted ?? 0}/{NON_ADMIN_PAGES.length} pages granted
+                          <p className="mt-2 text-xs font-mono">
+                            <span className="text-emerald-300/95">{userStats.get(selectedUser.id)?.granted ?? 0}</span>
+                            <span className="text-slate-400/80">/{NON_ADMIN_PAGES.length}</span>
+                            <span className="text-slate-400/80"> pages granted</span>
                           </p>
                         </div>
 
@@ -633,15 +667,25 @@ export default function AdminPageClient() {
                                       disabled={isSaving}
                                       onClick={() => void saveUserAccess(selectedUser, page.slug, !effective)}
                                       className={`relative inline-flex h-6 w-11 items-center rounded-full px-1 transition-all duration-150 [transition-timing-function:ease] ${
-                                        effective ? 'bg-emerald-500/40' : 'bg-brand-700'
+                                        effective ? 'bg-emerald-400/30' : 'bg-red-500/25'
                                       } ${isSaving ? 'cursor-not-allowed opacity-60' : ''}`}
                                       aria-label={`Set ${page.label} access for ${getUserFullName(selectedUser)}`}
                                     >
                                       <span
-                                        className={`h-4 w-4 rounded-full bg-white transition-transform duration-150 [transition-timing-function:ease] ${
+                                        className={`flex h-4 w-4 items-center justify-center rounded-full transition-transform duration-150 [transition-timing-function:ease] ${
+                                          effective
+                                            ? 'bg-white text-emerald-500'
+                                            : 'border border-red-300/30 bg-red-100/15 text-red-300/80'
+                                        } ${
                                           effective ? 'translate-x-5' : 'translate-x-0'
                                         }`}
-                                      />
+                                      >
+                                        {effective ? (
+                                          <CheckIcon className="h-2.5 w-2.5" />
+                                        ) : (
+                                          <LockIcon className="h-2.5 w-2.5" />
+                                        )}
+                                      </span>
                                     </button>
                                   </div>
                                 )
