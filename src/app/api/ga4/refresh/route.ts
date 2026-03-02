@@ -231,6 +231,25 @@ function isBearerTokenValid(request: NextRequest) {
   return token === cronSecret
 }
 
+function getAppOrigin(request: NextRequest) {
+  const origin = request.headers.get('origin')
+  if (origin) return origin
+
+  const forwardedHost = request.headers.get('x-forwarded-host')
+  if (forwardedHost) {
+    const protocol = request.headers.get('x-forwarded-proto') || 'https'
+    return `${protocol}://${forwardedHost}`
+  }
+
+  const host = request.headers.get('host')
+  if (host) {
+    const protocol = host.startsWith('localhost') || host.startsWith('127.0.0.1') ? 'http' : 'https'
+    return `${protocol}://${host}`
+  }
+
+  return process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL || null
+}
+
 export async function POST(request: NextRequest) {
   if (!isBearerTokenValid(request)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -283,13 +302,17 @@ export async function POST(request: NextRequest) {
       durationMs: Date.now() - startedAt,
     })
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://helm.nexweb.dev'
-    void fetch(`${appUrl}/api/ga4/site-reports`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-    }).catch((err) => {
-      console.warn('Site reports refresh failed:', err)
-    })
+    const appOrigin = getAppOrigin(request)
+    if (appOrigin) {
+      void fetch(`${appOrigin}/api/ga4/site-reports`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }).catch((err) => {
+        console.warn('Site reports refresh failed:', err)
+      })
+    } else {
+      console.warn('Site reports refresh skipped: unable to resolve app origin.')
+    }
 
     return NextResponse.json({
       status: 'success',

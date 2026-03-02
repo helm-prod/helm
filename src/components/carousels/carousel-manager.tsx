@@ -214,7 +214,7 @@ export function CarouselManager({ currentUser, initialCarousels, initialItems }:
   }
 
   async function handleCopySnippet(pageSlug: string) {
-    const snippet = `<div id="helm-carousels" data-page="${pageSlug}"></div>\n<script src="https://helm.nexweb.dev/embed/carousel.js"></script>`
+    const snippet = `<div id="helm-carousels" data-page="${pageSlug}"></div>\n<script src="${window.location.origin}/embed/carousel.js"></script>`
 
     try {
       await navigator.clipboard.writeText(snippet)

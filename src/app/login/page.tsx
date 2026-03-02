@@ -21,11 +21,18 @@ export default function LoginPage() {
     const supabase = createClient()
 
     if (isSignUp) {
+      const origin =
+        typeof window !== 'undefined'
+          ? window.location.origin
+          : process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL || null
+      const emailRedirectTo = origin ? `${origin}/auth/callback` : undefined
+
       const { error } = await supabase.auth.signUp({
         email,
         password,
         options: {
           data: { full_name: fullName },
+          ...(emailRedirectTo ? { emailRedirectTo } : {}),
         },
       })
       if (error) {

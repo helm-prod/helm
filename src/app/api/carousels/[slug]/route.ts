@@ -6,15 +6,62 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-const ALLOWED_ORIGINS = [
+const STATIC_ALLOWED_ORIGINS = [
   'https://www.mynavyexchange.com',
   'https://mynavyexchange.com',
-  'https://helm.nexweb.dev',
   'http://localhost:3000',
 ];
 
-function getCorsHeaders(origin: string | null) {
-  const allowedOrigin = origin && ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+function normalizeOrigin(value: string) {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return value.replace(/\/+$/, '');
+  }
+}
+
+function getRequestOrigin(request: NextRequest) {
+  const forwardedHost = request.headers.get('x-forwarded-host');
+  if (forwardedHost) {
+    const protocol = request.headers.get('x-forwarded-proto') || 'https';
+    return `${protocol}://${forwardedHost}`;
+  }
+
+  const host = request.headers.get('host');
+  if (host) {
+    const protocol = host.startsWith('localhost') || host.startsWith('127.0.0.1') ? 'http' : 'https';
+    return `${protocol}://${host}`;
+  }
+
+  return request.nextUrl.origin;
+}
+
+function getAllowedOrigins(request: NextRequest) {
+  const allowedOrigins = new Set(STATIC_ALLOWED_ORIGINS);
+  const runtimeOrigin = getRequestOrigin(request);
+  if (runtimeOrigin) {
+    allowedOrigins.add(normalizeOrigin(runtimeOrigin));
+  }
+
+  const envOrigins = [process.env.NEXT_PUBLIC_SITE_URL, process.env.NEXT_PUBLIC_APP_URL].filter(
+    (value): value is string => Boolean(value)
+  );
+  for (const envOrigin of envOrigins) {
+    allowedOrigins.add(normalizeOrigin(envOrigin));
+  }
+
+  return allowedOrigins;
+}
+
+function getCorsHeaders(request: NextRequest) {
+  const origin = request.headers.get('origin');
+  const allowedOrigins = getAllowedOrigins(request);
+  const fallbackOrigin = normalizeOrigin(getRequestOrigin(request) || STATIC_ALLOWED_ORIGINS[0]);
+  const allowedOrigin =
+    origin && allowedOrigins.has(normalizeOrigin(origin))
+      ? normalizeOrigin(origin)
+      : fallbackOrigin;
+
   return {
     'Access-Control-Allow-Origin': allowedOrigin,
     'Access-Control-Allow-Methods': 'GET, OPTIONS',
@@ -24,16 +71,14 @@ function getCorsHeaders(origin: string | null) {
 }
 
 export async function OPTIONS(request: NextRequest) {
-  const origin = request.headers.get('origin');
-  return new NextResponse(null, { status: 204, headers: getCorsHeaders(origin) });
+  return new NextResponse(null, { status: 204, headers: getCorsHeaders(request) });
 }
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ slug: string }> }
 ) {
-  const origin = request.headers.get('origin');
-  const headers = getCorsHeaders(origin);
+  const headers = getCorsHeaders(request);
   
   try {
     const { slug } = await params;
