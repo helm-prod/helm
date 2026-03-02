@@ -24,6 +24,7 @@ export const NAV_ITEMS: NavItem[] = [
   { slug: 'analytics-speed', label: 'Site Speed', icon: 'Gauge' },
   { slug: 'sops', label: 'SOPs', icon: 'BookOpen' },
   { slug: 'requests', label: 'Requests', icon: 'MessageSquare' },
+  { slug: 'bugs', label: 'Bug Reports', icon: 'Bug' },
   { slug: 'settings', label: 'Settings', icon: 'Settings' },
   { slug: 'profile', label: 'Profile', icon: 'User' },
   { slug: 'admin', label: 'Admin', icon: 'Shield', adminOnly: true },

@@ -13,7 +13,10 @@ type UserOverrideRow = {
   is_enabled: boolean
 }
 
-function getRoleDefault(role: UserRole): boolean {
+const ALWAYS_ENABLED_SLUGS = new Set<string>(['bugs'])
+
+function getRoleDefault(role: UserRole, pageSlug: string): boolean {
+  if (ALWAYS_ENABLED_SLUGS.has(pageSlug)) return true
   if (role === 'senior_web_producer') return true
   return false
 }
@@ -79,7 +82,7 @@ export async function getEffectiveAccess(
       continue
     }
 
-    if (getRoleDefault(role)) {
+    if (getRoleDefault(role, item.slug)) {
       effective.add(item.slug)
     }
   }
@@ -159,7 +162,11 @@ export async function ensurePageAccessRows(
     }
 
     if (!existing.has(`${slug}:producer`)) {
-      inserts.push({ page_slug: slug, role: 'producer', is_enabled: false })
+      inserts.push({
+        page_slug: slug,
+        role: 'producer',
+        is_enabled: ALWAYS_ENABLED_SLUGS.has(slug),
+      })
     }
   }
 

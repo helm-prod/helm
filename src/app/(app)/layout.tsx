@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { Sidebar } from '@/components/sidebar'
+import { BugReportButton } from '@/components/bug-report/bug-report-button'
 import type { Profile } from '@/lib/types/database'
 
 export default async function AppLayout({
@@ -51,6 +52,7 @@ export default async function AppLayout({
     <div className="flex min-h-screen">
       <Sidebar profile={profile as Profile} myQueueCount={myQueueCount} />
       <main className="flex-1 ml-64 p-8">{children}</main>
+      <BugReportButton />
     </div>
   )
 }

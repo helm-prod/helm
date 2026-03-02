@@ -81,6 +81,23 @@ export interface WorkRequest {
   assignee?: Profile
 }
 
+export interface BugReport {
+  id: string
+  reporter_id: string
+  title: string
+  description: string | null
+  screenshot_url: string | null
+  page_url: string
+  page_title: string | null
+  user_agent: string | null
+  viewport: string | null
+  status: 'new' | 'in_progress' | 'resolved' | 'closed'
+  priority: 'low' | 'medium' | 'high' | 'critical'
+  admin_notes: string | null
+  created_at: string
+  updated_at: string
+}
+
 // Labels for display
 export const REQUEST_TYPE_LABELS: Record<RequestType, string> = {
   new_panel: 'New Panel',
