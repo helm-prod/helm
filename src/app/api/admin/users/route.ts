@@ -9,10 +9,11 @@ type AuthMetadata = {
 }
 
 type ActionBody = {
-  action?: 'reset_password' | 'toggle_lock' | 'update_email'
+  action?: 'reset_password' | 'toggle_lock' | 'update_email' | 'set_password'
   userId?: string
   email?: string
   banned?: boolean
+  password?: string
 }
 
 async function requireAdmin() {
@@ -69,6 +70,7 @@ export async function GET() {
   while (true) {
     const { data, error } = await supabase.auth.admin.listUsers({ page, perPage })
     if (error) {
+      console.error('Failed to list users from Supabase admin API', error)
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
@@ -108,7 +110,7 @@ export async function POST(request: NextRequest) {
 
   if (
     userId === admin.userId &&
-    (action === 'toggle_lock' || action === 'update_email')
+    (action === 'toggle_lock' || action === 'update_email' || action === 'set_password')
   ) {
     return NextResponse.json({ error: 'You cannot perform this action on your own account.' }, { status: 400 })
   }
@@ -196,6 +198,20 @@ export async function POST(request: NextRequest) {
       last_sign_in_at: data.user?.last_sign_in_at ?? null,
       banned_until: data.user?.banned_until ?? null,
     })
+  }
+
+  if (action === 'set_password') {
+    const password = body.password || ''
+    if (password.length < 8) {
+      return NextResponse.json({ error: 'Password must be at least 8 characters' }, { status: 400 })
+    }
+
+    const { error } = await supabase.auth.admin.updateUserById(userId, { password })
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 400 })
+    }
+
+    return NextResponse.json({ success: true, message: 'Password updated' })
   }
 
   return NextResponse.json({ error: 'Unsupported action.' }, { status: 400 })

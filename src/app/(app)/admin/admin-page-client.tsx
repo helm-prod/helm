@@ -1,6 +1,6 @@
 'use client'
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { NAV_ITEMS, ROLES, formatRoleName } from '@/lib/nav-config'
@@ -27,10 +27,11 @@ type RowNotice = {
 const RELATIVE_TIME_FORMATTER = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
 
 function formatRelativeTime(isoString: string | null | undefined) {
-  if (!isoString) return 'Never'
+  if (isoString === undefined) return 'Unavailable'
+  if (isoString === null) return 'Never'
 
   const parsed = new Date(isoString)
-  if (Number.isNaN(parsed.getTime())) return 'Never'
+  if (Number.isNaN(parsed.getTime())) return 'Unavailable'
 
   const diffSeconds = Math.round((parsed.getTime() - Date.now()) / 1000)
   const absSeconds = Math.abs(diffSeconds)
@@ -125,6 +126,34 @@ function EditIcon({ className }: { className?: string }) {
   )
 }
 
+function KeyIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <circle cx="5.5" cy="8" r="2.5" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M8 8h5M11 8v2M13 8v2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function EyeIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M1.5 8s2.2-3.5 6.5-3.5S14.5 8 14.5 8s-2.2 3.5-6.5 3.5S1.5 8 1.5 8z" stroke="currentColor" strokeWidth="1.3" />
+      <circle cx="8" cy="8" r="1.8" stroke="currentColor" strokeWidth="1.3" />
+    </svg>
+  )
+}
+
+function EyeOffIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M2 2l12 12" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+      <path d="M1.5 8s2.2-3.5 6.5-3.5c1.1 0 2.1.2 3 .6M14.5 8s-.7 1.1-2 2M8 11.5c-4.3 0-6.5-3.5-6.5-3.5s.8-1.2 2.1-2.2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+      <circle cx="8" cy="8" r="1.8" stroke="currentColor" strokeWidth="1.3" />
+    </svg>
+  )
+}
+
 function getRoleDefault(
   pageAccessMap: Map<string, boolean>,
   pageSlug: string,
@@ -207,12 +236,17 @@ export default function AdminPageClient() {
   const [openActionsUserId, setOpenActionsUserId] = useState<string | null>(null)
   const [editingEmailUserId, setEditingEmailUserId] = useState<string | null>(null)
   const [emailDraft, setEmailDraft] = useState('')
+  const [editingPasswordUserId, setEditingPasswordUserId] = useState<string | null>(null)
+  const [passwordDraft, setPasswordDraft] = useState('')
+  const [showPasswordDraft, setShowPasswordDraft] = useState(false)
+  const [passwordValidationMessage, setPasswordValidationMessage] = useState('')
   const [rowNoticeByUserId, setRowNoticeByUserId] = useState<Record<string, RowNotice>>({})
 
   const [savingRoleUserId, setSavingRoleUserId] = useState<string | null>(null)
   const [savingCellKey, setSavingCellKey] = useState<string | null>(null)
   const [savingAccountActionKey, setSavingAccountActionKey] = useState<string | null>(null)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
+  const manageMenuRef = useRef<HTMLDivElement | null>(null)
 
   const showToast = useCallback((message: string) => {
     setToastMessage(message)
@@ -370,6 +404,31 @@ export default function AdminPageClient() {
     }
   }, [focusedUserId, nonAdminUsers])
 
+  useEffect(() => {
+    function handleDocumentClick(event: MouseEvent) {
+      if (!openActionsUserId) return
+      const target = event.target as Node | null
+      if (!manageMenuRef.current || (target && manageMenuRef.current.contains(target))) {
+        return
+      }
+      setOpenActionsUserId(null)
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setOpenActionsUserId(null)
+      }
+    }
+
+    document.addEventListener('mousedown', handleDocumentClick)
+    document.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      document.removeEventListener('mousedown', handleDocumentClick)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [openActionsUserId])
+
   async function updateTeamRole(userId: string, nextRole: UserRole) {
     const member = teamMembers.find((item) => item.id === userId)
     if (!member) return
@@ -408,9 +467,10 @@ export default function AdminPageClient() {
   async function runAccountAction(
     user: Profile,
     body: {
-      action: 'reset_password' | 'toggle_lock' | 'update_email'
+      action: 'reset_password' | 'toggle_lock' | 'update_email' | 'set_password'
       email?: string
       banned?: boolean
+      password?: string
     },
   ) {
     const actionKey = `${body.action}:${user.id}`
@@ -478,6 +538,18 @@ export default function AdminPageClient() {
       showRowNotice(user.id, {
         type: 'success',
         message: `Email updated to ${nextEmail}`,
+      })
+      return true
+    }
+
+    if (body.action === 'set_password') {
+      setEditingPasswordUserId(null)
+      setPasswordDraft('')
+      setShowPasswordDraft(false)
+      setPasswordValidationMessage('')
+      showRowNotice(user.id, {
+        type: 'success',
+        message: String(payload.message || 'Password updated'),
       })
       return true
     }
@@ -595,7 +667,7 @@ export default function AdminPageClient() {
             <h2 className="text-lg font-semibold text-white">Team Members</h2>
           </div>
 
-          <div className="overflow-x-auto">
+          <div className="relative overflow-x-auto overflow-y-visible">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-brand-800 text-brand-400">
@@ -618,6 +690,7 @@ export default function AdminPageClient() {
                   const isResetting = savingAccountActionKey === `reset_password:${member.id}`
                   const isLocking = savingAccountActionKey === `toggle_lock:${member.id}`
                   const isUpdatingEmail = savingAccountActionKey === `update_email:${member.id}`
+                  const isSettingPassword = savingAccountActionKey === `set_password:${member.id}`
 
                   return (
                     <Fragment key={member.id}>
@@ -660,7 +733,7 @@ export default function AdminPageClient() {
                           </span>
                         </td>
                         <td className="px-4 py-3">
-                          <div className="relative inline-block">
+                          <div ref={actionMenuOpen ? manageMenuRef : null} className="relative inline-block">
                             <button
                               type="button"
                               onClick={() =>
@@ -672,7 +745,27 @@ export default function AdminPageClient() {
                             </button>
 
                             {actionMenuOpen && (
-                              <div className="absolute right-0 top-full z-30 mt-1 w-44 rounded-lg border border-brand-700 bg-brand-900 p-1 shadow-xl">
+                              <div className="absolute bottom-full right-0 z-50 mb-1 w-44 rounded-lg border border-brand-700 bg-brand-900 p-1 shadow-xl">
+                                {!isSelf && (
+                                  <button
+                                    type="button"
+                                    disabled={isSettingPassword}
+                                    onClick={() => {
+                                      setOpenActionsUserId(null)
+                                      setEditingEmailUserId(null)
+                                      setEmailDraft('')
+                                      setEditingPasswordUserId(member.id)
+                                      setPasswordDraft('')
+                                      setShowPasswordDraft(false)
+                                      setPasswordValidationMessage('')
+                                    }}
+                                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-brand-200 transition-colors hover:bg-brand-800 disabled:cursor-not-allowed disabled:opacity-60"
+                                  >
+                                    <KeyIcon className="h-3.5 w-3.5" />
+                                    Set Password
+                                  </button>
+                                )}
+
                                 <button
                                   type="button"
                                   disabled={isResetting}
@@ -686,7 +779,7 @@ export default function AdminPageClient() {
                                   className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-brand-200 transition-colors hover:bg-brand-800 disabled:cursor-not-allowed disabled:opacity-60"
                                 >
                                   <MailIcon className="h-3.5 w-3.5" />
-                                  Reset Password
+                                  Send Reset Email
                                 </button>
 
                                 {!isSelf && (
@@ -694,6 +787,10 @@ export default function AdminPageClient() {
                                     type="button"
                                     onClick={() => {
                                       setOpenActionsUserId(null)
+                                      setEditingPasswordUserId(null)
+                                      setPasswordDraft('')
+                                      setShowPasswordDraft(false)
+                                      setPasswordValidationMessage('')
                                       setEditingEmailUserId(member.id)
                                       setEmailDraft(member.email)
                                     }}
@@ -777,6 +874,77 @@ export default function AdminPageClient() {
                                   Cancel
                                 </button>
                               </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+
+                      {editingPasswordUserId === member.id && (
+                        <tr className="bg-brand-900/40">
+                          <td colSpan={6} className="px-4 py-3">
+                            <div className="flex flex-col gap-2">
+                              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                                <div className="relative w-full sm:max-w-sm">
+                                  <input
+                                    type={showPasswordDraft ? 'text' : 'password'}
+                                    value={passwordDraft}
+                                    onChange={(event) => {
+                                      setPasswordDraft(event.target.value)
+                                      if (passwordValidationMessage) {
+                                        setPasswordValidationMessage('')
+                                      }
+                                    }}
+                                    placeholder="Enter new password"
+                                    className="w-full rounded-lg border border-brand-700 bg-brand-900 px-3 py-2 pr-10 text-sm text-white placeholder:text-brand-500"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowPasswordDraft((prev) => !prev)}
+                                    className="absolute right-2 top-1/2 -translate-y-1/2 text-brand-300 transition-colors hover:text-white"
+                                    aria-label={showPasswordDraft ? 'Hide password' : 'Show password'}
+                                  >
+                                    {showPasswordDraft ? (
+                                      <EyeOffIcon className="h-4 w-4" />
+                                    ) : (
+                                      <EyeIcon className="h-4 w-4" />
+                                    )}
+                                  </button>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    disabled={isSettingPassword}
+                                    onClick={() => {
+                                      if (passwordDraft.length < 8) {
+                                        setPasswordValidationMessage('Password must be at least 8 characters.')
+                                        return
+                                      }
+                                      void runAccountAction(member, {
+                                        action: 'set_password',
+                                        password: passwordDraft,
+                                      })
+                                    }}
+                                    className="rounded-md border border-emerald-500/40 bg-emerald-500/15 px-2.5 py-1.5 text-xs text-emerald-200 transition-colors hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-60"
+                                  >
+                                    Save
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingPasswordUserId(null)
+                                      setPasswordDraft('')
+                                      setShowPasswordDraft(false)
+                                      setPasswordValidationMessage('')
+                                    }}
+                                    className="rounded-md border border-brand-700 px-2.5 py-1.5 text-xs text-brand-300 transition-colors hover:border-brand-600 hover:text-white"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
+                              {passwordValidationMessage && (
+                                <p className="text-xs text-amber-300">{passwordValidationMessage}</p>
+                              )}
                             </div>
                           </td>
                         </tr>
