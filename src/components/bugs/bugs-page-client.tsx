@@ -11,6 +11,7 @@ import {
   Lightbulb,
   Monitor,
   Shield,
+  Trash2,
   User,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
@@ -120,6 +121,20 @@ function parseBrowserName(userAgent: string | null) {
   return 'Unknown'
 }
 
+function extractStoragePathFromPublicUrl(url: string) {
+  try {
+    const parsed = new URL(url)
+    const marker = '/storage/v1/object/public/bug-screenshots/'
+    const markerIndex = parsed.pathname.indexOf(marker)
+    if (markerIndex === -1) return null
+    const path = parsed.pathname.slice(markerIndex + marker.length)
+    if (!path) return null
+    return decodeURIComponent(path)
+  } catch {
+    return null
+  }
+}
+
 function EmptyState({ typeFilter, statusFilter }: { typeFilter: TypeFilter; statusFilter: StatusFilter }) {
   let TitleIcon = Inbox
   let title = 'No reports match this filter'
@@ -180,6 +195,8 @@ export default function BugsPageClient({ bugs, isAdmin, currentUserId }: BugsPag
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
+  const [deletingBugId, setDeletingBugId] = useState<string | null>(null)
   const [notesDraftById, setNotesDraftById] = useState<Record<string, string>>(() =>
     bugs.reduce<Record<string, string>>((acc, bug) => {
       acc[bug.id] = bug.admin_notes ?? ''
@@ -263,6 +280,62 @@ export default function BugsPageClient({ bugs, isAdmin, currentUserId }: BugsPag
     }
 
     markSaved(bugId)
+  }
+
+  async function deleteBugReport(bugId: string) {
+    const bugToDelete = bugRows.find((bug) => bug.id === bugId)
+    if (!bugToDelete) return
+
+    const originalIndex = bugRows.findIndex((bug) => bug.id === bugId)
+    setDeleteConfirmId(null)
+    setDeletingBugId(bugId)
+    setExpandedId((prev) => (prev === bugId ? null : prev))
+    setBugRows((prev) => prev.filter((bug) => bug.id !== bugId))
+
+    try {
+      if (bugToDelete.screenshot_url) {
+        try {
+          const storagePath = extractStoragePathFromPublicUrl(bugToDelete.screenshot_url)
+          if (storagePath) {
+            await supabase.storage.from('bug-screenshots').remove([storagePath])
+          }
+        } catch {
+          // Best-effort cleanup; do not block bug report deletion.
+        }
+      }
+
+      const { error } = await supabase
+        .from('bug_reports')
+        .delete()
+        .eq('id', bugId)
+
+      if (error) {
+        throw error
+      }
+
+      setNotesDraftById((prev) => {
+        const next = { ...prev }
+        delete next[bugId]
+        return next
+      })
+      setSavedByBugId((prev) => {
+        const next = { ...prev }
+        delete next[bugId]
+        return next
+      })
+    } catch {
+      setBugRows((prev) => {
+        if (prev.some((bug) => bug.id === bugToDelete.id)) return prev
+        const next = [...prev]
+        const insertAt = originalIndex < 0 ? next.length : Math.min(originalIndex, next.length)
+        next.splice(insertAt, 0, bugToDelete)
+        return next
+      })
+      setExpandedId(bugId)
+      showError('Unable to delete this report. Please try again.')
+    } finally {
+      setDeletingBugId(null)
+    }
   }
 
   return (
@@ -545,6 +618,41 @@ export default function BugsPageClient({ bugs, isAdmin, currentUserId }: BugsPag
                             >
                               Save Notes
                             </button>
+                          </div>
+
+                          <div className="ml-auto self-end">
+                            {deleteConfirmId === bug.id ? (
+                              <div className="flex flex-wrap items-center justify-end gap-2">
+                                <p className="text-sm text-red-400">
+                                  Delete this report? This cannot be undone.
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={() => setDeleteConfirmId(null)}
+                                  className="rounded-lg px-3 py-1.5 text-sm text-zinc-400 transition-colors hover:text-white"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void deleteBugReport(bug.id)}
+                                  disabled={deletingBugId === bug.id}
+                                  className="rounded-lg bg-red-500 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  {deletingBugId === bug.id ? 'Deleting...' : 'Delete'}
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setDeleteConfirmId(bug.id)}
+                                disabled={deletingBugId === bug.id}
+                                className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-red-400 transition-colors hover:bg-red-500/10 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                                Delete Report
+                              </button>
+                            )}
                           </div>
                         </div>
 
