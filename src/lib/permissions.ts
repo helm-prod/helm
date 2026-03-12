@@ -13,7 +13,11 @@ type UserOverrideRow = {
   is_enabled: boolean
 }
 
-const ALWAYS_ENABLED_SLUGS = new Set<string>(['bugs'])
+const ALWAYS_ENABLED_SLUGS = new Set<string>([
+  'bugs',
+  'site-quality-link-health',
+  'site-quality-panel-intelligence',
+])
 
 function getRoleDefault(role: UserRole, pageSlug: string): boolean {
   if (ALWAYS_ENABLED_SLUGS.has(pageSlug)) return true

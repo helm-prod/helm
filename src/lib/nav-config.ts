@@ -24,6 +24,8 @@ export const NAV_ITEMS: NavItem[] = [
   { slug: 'analytics-products', label: 'Products', icon: 'Package' },
   { slug: 'analytics-performance', label: 'Site Performance', icon: 'Activity' },
   { slug: 'analytics-speed', label: 'Site Speed', icon: 'Gauge' },
+  { slug: 'site-quality-link-health', label: 'Link Health', icon: 'Shield' },
+  { slug: 'site-quality-panel-intelligence', label: 'Panel Intelligence', icon: 'Shield' },
   { slug: 'sops', label: 'SOPs', icon: 'BookOpen' },
   { slug: 'requests', label: 'Requests', icon: 'MessageSquare' },
   { slug: 'bugs', label: 'Bug Reports', icon: 'Bug' },

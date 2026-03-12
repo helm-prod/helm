@@ -11,6 +11,22 @@
     {
       "path": "/api/cron/gmc-sync",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron/site-quality-scan",
+      "schedule": "30 4 * * 0"
+    },
+    {
+      "path": "/api/cron/site-quality-scan",
+      "schedule": "30 4 * * 3"
+    },
+    {
+      "path": "/api/cron/site-quality-scan",
+      "schedule": "30 4 * * 5"
+    },
+    {
+      "path": "/api/cron/site-quality-scan-panels",
+      "schedule": "30 13 * * 1"
     }
   ]
 }

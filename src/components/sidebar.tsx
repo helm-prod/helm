@@ -3,7 +3,7 @@
 import { Fragment, type ReactNode, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { Activity, BarChart3, Bug, ChevronDown, ChevronRight, GalleryHorizontalEnd, Gauge, Package, Search } from 'lucide-react'
+import { Activity, BarChart3, Bug, ChevronDown, ChevronRight, GalleryHorizontalEnd, Gauge, Package, Search, Shield } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { getEffectiveAccess, getUserRole } from '@/lib/permissions'
 import { NAV_ITEMS, formatRoleName } from '@/lib/nav-config'
@@ -62,6 +62,23 @@ const ANALYTICS_NAV_ITEMS = [
 
 const ANALYTICS_SLUGS = new Set<string>(ANALYTICS_NAV_ITEMS.map((item) => item.slug))
 
+const SITE_QUALITY_NAV_ITEMS = [
+  {
+    slug: 'site-quality-link-health',
+    label: 'Link Health',
+    href: '/site-quality/link-health',
+    Icon: Shield,
+  },
+  {
+    slug: 'site-quality-panel-intelligence',
+    label: 'Panel Intelligence',
+    href: '/site-quality/panel-intelligence',
+    Icon: Shield,
+  },
+] as const
+
+const SITE_QUALITY_SLUGS = new Set<string>(SITE_QUALITY_NAV_ITEMS.map((item) => item.slug))
+
 export function Sidebar({ profile, myQueueCount }: { profile: Profile; myQueueCount: number }) {
   const pathname = usePathname()
   const router = useRouter()
@@ -69,6 +86,7 @@ export function Sidebar({ profile, myQueueCount }: { profile: Profile; myQueueCo
 
   const [role, setRole] = useState<UserRole>(profile.role)
   const [isAnalyticsExpanded, setIsAnalyticsExpanded] = useState(true)
+  const [isSiteQualityExpanded, setIsSiteQualityExpanded] = useState(true)
   const [accessibleSlugs, setAccessibleSlugs] = useState<Set<string>>(
     () => new Set(profile.role === 'admin' ? NAV_ITEMS.map((item) => item.slug) : []),
   )
@@ -107,11 +125,20 @@ export function Sidebar({ profile, myQueueCount }: { profile: Profile; myQueueCo
   const roleLabel = formatRoleName(role)
 
   const navItems = NAV_ITEMS.filter(
-    (item) => !ANALYTICS_SLUGS.has(item.slug) && !(item.adminOnly && role !== 'admin')
+    (item) =>
+      !ANALYTICS_SLUGS.has(item.slug) &&
+      !SITE_QUALITY_SLUGS.has(item.slug) &&
+      !(item.adminOnly && role !== 'admin')
   )
   const isAnalyticsRoute = pathname.startsWith('/analytics/')
+  const isSiteQualityRoute = pathname.startsWith('/site-quality/')
   const analyticsHeaderClass = `group flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-sm font-medium transition-colors ${
     isAnalyticsRoute
+      ? 'border-brand-700 bg-nex-navyLight/70 text-white shadow-[inset_4px_0_0_0_#CFA751]'
+      : 'border-transparent text-brand-100 hover:border-brand-700 hover:bg-brand-800/70 hover:text-white'
+  }`
+  const siteQualityHeaderClass = `group flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-sm font-medium transition-colors ${
+    isSiteQualityRoute
       ? 'border-brand-700 bg-nex-navyLight/70 text-white shadow-[inset_4px_0_0_0_#CFA751]'
       : 'border-transparent text-brand-100 hover:border-brand-700 hover:bg-brand-800/70 hover:text-white'
   }`
@@ -141,6 +168,7 @@ export function Sidebar({ profile, myQueueCount }: { profile: Profile; myQueueCo
             pathname === href || (href !== '/dashboard' && pathname.startsWith(`${href}/`))
           const hasAccess = accessibleSlugs.has(item.slug)
           const shouldRenderAnalytics = item.slug === 'aor-settings'
+          const shouldRenderSiteQuality = item.slug === 'aor-settings'
           const navItemClass = `group flex items-center justify-between rounded-xl border px-3 py-2.5 text-sm font-medium transition-colors ${
             isActive
               ? 'border-brand-700 bg-nex-navyLight/70 text-white shadow-[inset_4px_0_0_0_#CFA751]'
@@ -237,6 +265,69 @@ export function Sidebar({ profile, myQueueCount }: { profile: Profile; myQueueCo
                             <span className="flex items-center gap-3">
                               <SubItemIcon className="h-5 w-5 shrink-0" />
                               {analyticsItem.label}
+                            </span>
+                          </Link>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+              {shouldRenderSiteQuality && (
+                <div className="space-y-1">
+                  <button
+                    type="button"
+                    onClick={() => setIsSiteQualityExpanded((prev) => !prev)}
+                    className={siteQualityHeaderClass}
+                  >
+                    <span className="flex items-center gap-3">
+                      <Shield className="h-5 w-5 shrink-0" />
+                      Site Quality
+                    </span>
+                    {isSiteQualityExpanded ? (
+                      <ChevronDown className="h-4 w-4 shrink-0" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4 shrink-0" />
+                    )}
+                  </button>
+
+                  {isSiteQualityExpanded && (
+                    <div className="space-y-1">
+                      {SITE_QUALITY_NAV_ITEMS.map((siteItem) => {
+                        const subItemActive =
+                          pathname === siteItem.href ||
+                          pathname.startsWith(`${siteItem.href}/`)
+                        const subItemAccessible = accessibleSlugs.has(siteItem.slug)
+                        const SubItemIcon = siteItem.Icon
+                        const subItemClass = `group flex items-center rounded-xl border px-3 py-2.5 pl-10 text-sm font-medium transition-colors ${
+                          subItemActive
+                            ? 'border-brand-700 bg-nex-navyLight/70 text-white shadow-[inset_4px_0_0_0_#CFA751]'
+                            : 'border-transparent text-brand-100 hover:border-brand-700 hover:bg-brand-800/70 hover:text-white'
+                        }`
+
+                        if (!subItemAccessible) {
+                          return (
+                            <div
+                              key={siteItem.slug}
+                              title="You don't currently have access"
+                              className="flex cursor-default items-center rounded-xl border border-transparent px-3 py-2.5 pl-10 text-sm font-medium text-brand-100 opacity-40"
+                            >
+                              <span className="flex items-center gap-3">
+                                <SubItemIcon className="h-5 w-5 shrink-0" />
+                                <span className="flex items-center gap-2">
+                                  {siteItem.label}
+                                  <LockIcon className="h-3.5 w-3.5" />
+                                </span>
+                              </span>
+                            </div>
+                          )
+                        }
+
+                        return (
+                          <Link key={siteItem.slug} href={siteItem.href} className={subItemClass}>
+                            <span className="flex items-center gap-3">
+                              <SubItemIcon className="h-5 w-5 shrink-0" />
+                              {siteItem.label}
                             </span>
                           </Link>
                         )
