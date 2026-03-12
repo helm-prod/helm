@@ -1,5 +1,6 @@
 export type SiteQualityRunStatus = 'pending' | 'running' | 'complete' | 'failed'
 export type SiteQualityAorOwner = 'Megan' | 'Maddie' | 'Daryl'
+export type { ScrapedPanel, PanelScrapeResult } from './panel-scraper'
 
 export interface SiteQualityLinkRun {
   id: string
@@ -57,7 +58,11 @@ export interface SiteQualityPanelResult {
   category_l1: string
   outbound_url: string
   aor_owner: string
-  ad_week: string | null
+  ad_week: number | null
+  ad_year: number | null
+  slot: string | null
+  is_stale: boolean | null
+  category_folder: string | null
   score: number
   issues: SiteQualityPanelIssue[]
   ai_reasoning: string

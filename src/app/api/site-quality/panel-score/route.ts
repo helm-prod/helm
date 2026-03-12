@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient as createAuthClient } from '@/lib/supabase/server'
 import { createServiceRoleClient } from '@/lib/supabase/service'
-import { CURRENT_PANELS } from '@/lib/site-quality/panel-seed'
-import { scorePanel } from '@/lib/site-quality/panel-scorer'
+import { scoreLivePanels } from '@/lib/site-quality/panel-scorer'
 
 export const runtime = 'nodejs'
 
@@ -24,7 +23,7 @@ async function getActor(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const body = (await request.json().catch(() => ({}))) as { adWeek?: string; trigger?: 'manual' | 'scheduled' }
+    const body = (await request.json().catch(() => ({}))) as { adWeek?: number; trigger?: 'manual' | 'scheduled' }
     const actor = await getActor(request)
 
     if (actor.role !== 'admin') {
@@ -50,13 +49,7 @@ export async function POST(request: NextRequest) {
     void (async () => {
       try {
         await supabase.from('site_quality_panel_runs').update({ status: 'running' }).eq('id', run.id)
-        const seedPanels = CURRENT_PANELS.filter((panel) => !body.adWeek || panel.adWeek === body.adWeek)
-        const results = [] as Awaited<ReturnType<typeof scorePanel>>[]
-
-        for (const panel of seedPanels) {
-          const result = await scorePanel(panel)
-          results.push(result)
-        }
+        const results = await scoreLivePanels(body.adWeek)
 
         if (results.length > 0) {
           const inserts = results.map((item) => ({
@@ -67,6 +60,10 @@ export async function POST(request: NextRequest) {
             outbound_url: item.outboundUrl,
             aor_owner: item.aorOwner,
             ad_week: item.adWeek ?? null,
+            ad_year: item.adYear ?? null,
+            slot: item.slot ?? null,
+            is_stale: item.isStale ?? null,
+            category_folder: item.categoryFolder ?? null,
             score: item.score,
             issues: item.issues,
             ai_reasoning: item.aiReasoning,
