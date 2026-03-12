@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
   const supabase = createServiceRoleClient()
   const { data: run, error: runError } = await supabase
     .from('site_quality_link_runs')
-    .select('*')
+    .select('id, status, pages_scanned, links_checked, broken_count, redirect_count, started_at, completed_at, created_at, scope, scope_value, trigger, created_by')
     .eq('id', runId)
     .maybeSingle()
 

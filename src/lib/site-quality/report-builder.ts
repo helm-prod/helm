@@ -70,15 +70,15 @@ export function buildReportEmail({
         <section style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:24px;">
           <div style="padding:16px;border-radius:18px;background:rgba(0,65,115,0.3);border:1px solid rgba(0,110,180,0.25);color:#dbeafe;">
             <div style="font-size:12px;color:#93c5fd;">Pages scanned</div>
-            <div style="margin-top:6px;font-size:24px;color:#ffffff;">${linkRun?.total_pages ?? 0}</div>
+            <div style="margin-top:6px;font-size:24px;color:#ffffff;">${linkRun?.pages_scanned ?? 0}</div>
           </div>
           <div style="padding:16px;border-radius:18px;background:rgba(0,65,115,0.3);border:1px solid rgba(0,110,180,0.25);color:#dbeafe;">
             <div style="font-size:12px;color:#93c5fd;">Links checked</div>
-            <div style="margin-top:6px;font-size:24px;color:#ffffff;">${linkRun?.total_links ?? 0}</div>
+            <div style="margin-top:6px;font-size:24px;color:#ffffff;">${linkRun?.links_checked ?? 0}</div>
           </div>
           <div style="padding:16px;border-radius:18px;background:rgba(0,65,115,0.3);border:1px solid rgba(0,110,180,0.25);color:#dbeafe;">
             <div style="font-size:12px;color:#93c5fd;">Broken / Redirects</div>
-            <div style="margin-top:6px;font-size:24px;color:#ffffff;">${linkRun?.broken_links ?? 0} / ${linkRun?.redirect_links ?? 0}</div>
+            <div style="margin-top:6px;font-size:24px;color:#ffffff;">${linkRun?.broken_count ?? 0} / ${linkRun?.redirect_count ?? 0}</div>
           </div>
           <div style="padding:16px;border-radius:18px;background:rgba(0,65,115,0.3);border:1px solid rgba(0,110,180,0.25);color:#dbeafe;">
             <div style="font-size:12px;color:#93c5fd;">Panels scored</div>

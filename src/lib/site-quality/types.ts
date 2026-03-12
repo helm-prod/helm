@@ -8,10 +8,11 @@ export interface SiteQualityLinkRun {
   scope_value: string | null
   trigger: 'manual' | 'scheduled'
   status: SiteQualityRunStatus
-  total_pages: number
-  total_links: number
-  broken_links: number
-  redirect_links: number
+  pages_scanned: number
+  links_checked: number
+  broken_count: number
+  redirect_count: number
+  started_at: string | null
   created_at: string
   completed_at: string | null
   created_by: string | null
