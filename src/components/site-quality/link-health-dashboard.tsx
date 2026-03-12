@@ -133,21 +133,46 @@ export function LinkHealthDashboard({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'start',
-          scope,
-          scopeValue: scope === 'all' ? undefined : scopeValue || undefined,
+          scope: scope ?? 'all',
+          scopeValue,
         }),
       })
-      const startData = await startRes.json()
+
       if (!startRes.ok) {
-        throw new Error(startData.error || 'Failed to start link scan')
+        throw new Error(`Failed to start scan: ${startRes.status}`)
       }
 
-      const runId = startData.runId as string
-      const totalPages = startData.totalPages as number
-      const pages = (startData.pages ?? []) as ScanPage[]
+      const startData = await startRes.json()
+      const { runId, totalPages, pages } = startData as {
+        runId: string
+        totalPages: number
+        pages: ScanPage[]
+      }
+
+      if (!pages || pages.length === 0) {
+        throw new Error('No pages returned from start')
+      }
 
       setCurrentRunId(runId)
-      setRun((current) => current ? { ...current, id: runId, status: 'running' } : null)
+      setRun((current) =>
+        current
+          ? { ...current, id: runId, status: 'running' }
+          : ({
+              id: runId,
+              scope,
+              scope_value: scopeValue || null,
+              trigger: 'manual',
+              status: 'running',
+              pages_scanned: 0,
+              links_checked: 0,
+              broken_count: 0,
+              redirect_count: 0,
+              started_at: new Date(startedAt).toISOString(),
+              created_at: new Date(startedAt).toISOString(),
+              completed_at: null,
+              created_by: null,
+            } as SiteQualityLinkRun)
+      )
       setScanState('running')
       setProgress((current) => ({ ...current, totalPages }))
 
@@ -162,27 +187,26 @@ export function LinkHealthDashboard({
             action: 'scan-page',
             runId,
             pageIndex: index,
-            pageUrl: normalizePageUrl(page.url),
+            pageUrl: page.url,
             pageLabel: page.label,
             aorOwner: page.aorOwner,
             totalPages,
           }),
         })
-        const pageData = await pageRes.json()
+
         if (!pageRes.ok) {
-          throw new Error(pageData.error || `Failed to scan ${page.label}`)
+          continue
         }
 
+        const pageData = await pageRes.json()
         setProgress((current) => ({
-          pagesScanned: pageData.pageIndex + 1,
-          totalPages: pageData.totalPages,
+          pagesScanned: index + 1,
+          totalPages,
           linksChecked: current.linksChecked + (pageData.linksChecked ?? 0),
           brokenFound: current.brokenFound + (pageData.brokenFound ?? 0),
         }))
 
-        if (pageData.isComplete) {
-          break
-        }
+        if (pageData.isComplete) break
       }
 
       await fetchResults(runId)
