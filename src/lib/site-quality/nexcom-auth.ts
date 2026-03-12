@@ -13,15 +13,16 @@ export async function getAuthenticatedPage() {
   })
 
   const page = await context.newPage()
-  const loginUrl = `${process.env.NEXCOM_SITE_URL}/login`
+  const loginUrl = `${process.env.NEXCOM_SITE_URL}/account/sign-in`
   await page.goto(loginUrl, { waitUntil: 'networkidle' })
   await page.fill('input[type="email"], input[name="email"], #email', process.env.NEXCOM_BOT_EMAIL!)
   await page.fill('input[type="password"], input[name="password"], #password', process.env.NEXCOM_BOT_PASSWORD!)
-  await page.click('button[type="submit"], input[type="submit"], .login-btn')
+  await page.click('input[name="/atg/userprofiling/ProfileFormHandler.login"], button[type="submit"]')
   await page.waitForNavigation({ waitUntil: 'networkidle', timeout: 15000 })
 
   const isLoggedIn = await page.evaluate(() => {
-    return !!document.querySelector('[data-logged-in], .account-nav, .sign-out, [href*="logout"]')
+    return document.body.innerText.includes('Hi ') ||
+      !!document.querySelector('[href*="sign-out"], [href*="logout"]')
   })
 
   if (!isLoggedIn) {
