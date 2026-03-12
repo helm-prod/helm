@@ -25,6 +25,14 @@ type ScanPage = {
   aorOwner: string
 }
 
+type LinkHealthResult = SiteQualityLinkResult & {
+  page_label?: string | null
+  panel_image?: string | null
+  slot?: string | null
+  ad_week?: number | null
+  ad_year?: number | null
+}
+
 function formatTimestamp(value: string | null) {
   if (!value) return 'No completed run yet'
   const date = new Date(value)
@@ -43,6 +51,12 @@ function pillTone(status: number | null, hasError: boolean) {
   if (hasError || status === 404) return 'border-red-300/30 bg-red-300/10 text-red-200'
   if (status !== null && status >= 300 && status < 400) return 'border-indigo-300/30 bg-indigo-300/10 text-indigo-200'
   return 'border-blue-300/30 bg-blue-300/10 text-blue-200'
+}
+
+function toAbsoluteUrl(value: string | null | undefined) {
+  if (!value) return ''
+  if (/^https?:\/\//i.test(value)) return value
+  return `https://www.mynavyexchange.com${value.startsWith('/') ? '' : '/'}${value}`
 }
 
 export function LinkHealthDashboard({
@@ -67,6 +81,7 @@ export function LinkHealthDashboard({
   const [scanStartTime, setScanStartTime] = useState<number | null>(null)
   const [elapsedMs, setElapsedMs] = useState(0)
   const [currentPage, setCurrentPage] = useState('')
+  const [selectedResult, setSelectedResult] = useState<LinkHealthResult | null>(null)
   const [progress, setProgress] = useState<ScanProgress>({
     pagesScanned: 0,
     totalPages: 0,
@@ -120,7 +135,7 @@ export function LinkHealthDashboard({
     }
 
     setRun(data.run)
-    setResults(data.results ?? [])
+    setResults((data.results ?? []) as SiteQualityLinkResult[])
     setCurrentRunId(runId)
   }
 
@@ -321,10 +336,14 @@ export function LinkHealthDashboard({
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/10 bg-[rgba(0,20,40,0.35)]">
-                {results.map((row) => (
-                  <tr key={row.id}>
+                {(results as LinkHealthResult[]).map((row) => (
+                  <tr key={row.id} onClick={() => setSelectedResult(row)} className="cursor-pointer transition-colors hover:bg-white/5">
                     <td className="px-4 py-3 align-top text-blue-200">
-                      <a href={row.link_url} target="_blank" rel="noreferrer" className="break-all text-blue-300">{row.link_url}</a>
+                      {row.link_url ? (
+                        <a href={row.link_url} target="_blank" rel="noreferrer" className="break-all text-blue-300" onClick={(event) => event.stopPropagation()}>{row.link_url}</a>
+                      ) : (
+                        <span className="italic text-blue-100/45">No link assigned</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 align-top text-blue-100/70">{row.source_label || row.page_url}</td>
                     <td className="px-4 py-3 align-top">
@@ -364,6 +383,109 @@ export function LinkHealthDashboard({
           {userRole === 'admin' && <ReportRecipientsManager initialRecipients={initialRecipients} />}
         </div>
       </div>
+
+      {selectedResult && (
+        <div className="fixed inset-0 z-50 flex justify-end" onClick={() => setSelectedResult(null)}>
+          <div className="absolute inset-0 bg-black/40" />
+
+          <div
+            className="relative flex h-full w-[480px] flex-col overflow-y-auto border-l border-[rgba(0,110,180,0.35)] bg-[#001f3a] shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-[rgba(0,110,180,0.25)] px-6 py-4">
+              <div>
+                <div className="text-sm font-medium text-white">
+                  {selectedResult.slot ? `Slot ${selectedResult.slot}` : 'Panel Detail'}
+                </div>
+                <div className="mt-0.5 text-xs text-slate-400">
+                  {selectedResult.page_label || selectedResult.source_label || 'Unknown page'} · {selectedResult.aor_owner || 'Unassigned'}
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedResult(null)}
+                className="text-xl leading-none text-slate-400 transition-colors hover:text-white"
+              >
+                ×
+              </button>
+            </div>
+
+            {selectedResult.panel_image && (
+              <div className="border-b border-[rgba(0,110,180,0.25)] px-6 py-4">
+                <div className="mb-2 text-xs uppercase tracking-wide text-slate-400">Panel</div>
+                <img
+                  src={toAbsoluteUrl(selectedResult.panel_image)}
+                  alt={`Slot ${selectedResult.slot || ''}`}
+                  className="w-full rounded border border-[rgba(0,110,180,0.25)]"
+                  onError={(event) => { (event.target as HTMLImageElement).style.display = 'none' }}
+                />
+                <div className="mt-1.5 truncate text-xs text-slate-500">
+                  {selectedResult.panel_image.split('/').pop()}
+                </div>
+              </div>
+            )}
+
+            <div className="flex flex-col gap-4 px-6 py-4">
+              <div>
+                <div className="mb-1 text-xs uppercase tracking-wide text-slate-400">Status</div>
+                <div className="flex items-center gap-2">
+                  {selectedResult.http_status === null ? (
+                    <span className="rounded-full bg-red-900/40 px-2 py-0.5 text-xs font-medium text-red-300">Unlinked panel</span>
+                  ) : selectedResult.http_status === 404 ? (
+                    <span className="rounded-full bg-red-900/40 px-2 py-0.5 text-xs font-medium text-red-300">404 Not Found</span>
+                  ) : (
+                    <span className="rounded-full bg-amber-900/40 px-2 py-0.5 text-xs font-medium text-amber-300">
+                      {selectedResult.http_status} Error
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <div className="mb-1 text-xs uppercase tracking-wide text-slate-400">Panel Links To</div>
+                {selectedResult.link_url ? (
+                  <a
+                    href={selectedResult.link_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="break-all text-sm text-blue-300 hover:underline"
+                  >
+                    {selectedResult.link_url}
+                  </a>
+                ) : (
+                  <span className="text-sm italic text-slate-500">No link assigned</span>
+                )}
+              </div>
+
+              {selectedResult.error_message && (
+                <div>
+                  <div className="mb-1 text-xs uppercase tracking-wide text-slate-400">Detail</div>
+                  <div className="text-sm text-slate-300">{selectedResult.error_message}</div>
+                </div>
+              )}
+
+              {(selectedResult.ad_week || selectedResult.ad_year) && (
+                <div>
+                  <div className="mb-1 text-xs uppercase tracking-wide text-slate-400">Ad Week</div>
+                  <div className="text-sm text-slate-300">
+                    {selectedResult.ad_year ? `20${selectedResult.ad_year}` : ''} Week {selectedResult.ad_week ?? '—'}
+                  </div>
+                </div>
+              )}
+
+              <div className="border-t border-[rgba(0,110,180,0.2)] pt-2">
+                <a
+                  href={toAbsoluteUrl(selectedResult.page_url)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-slate-400 transition-colors hover:text-blue-300"
+                >
+                  View live page →
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
