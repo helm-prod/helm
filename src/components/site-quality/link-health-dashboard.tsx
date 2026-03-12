@@ -9,7 +9,6 @@ import type { UserRole } from '@/lib/types/database'
 
 const CARD = 'rounded-[24px] border border-[rgba(0,110,180,0.25)] bg-[rgba(0,65,115,0.45)]'
 const AOR_OPTIONS = ['Megan', 'Maddie', 'Daryl'] as const
-const NEXCOM_SITE_URL = 'https://www.mynavyexchange.com'
 
 type ScanState = 'idle' | 'starting' | 'running' | 'complete'
 
@@ -38,11 +37,6 @@ function formatElapsed(ms: number) {
   const minutes = Math.floor(totalSeconds / 60)
   const seconds = totalSeconds % 60
   return `${minutes}m ${seconds}s`
-}
-
-function normalizePageUrl(value: string) {
-  if (/^https?:\/\//i.test(value)) return value
-  return `${NEXCOM_SITE_URL}${value.startsWith('/') ? '' : '/'}${value}`
 }
 
 function pillTone(status: number | null, hasError: boolean) {
@@ -104,6 +98,19 @@ export function LinkHealthDashboard({
       count: results.filter((item) => item.aor_owner === owner && (item.http_status === 404 || item.error_message)).length,
     }))
   }, [results])
+
+  const scopeOptions = useMemo(() => {
+    const options: Array<{ key: 'all' | 'aor' | 'url'; label: string }> = [
+      { key: 'all', label: 'All AORs' },
+    ]
+
+    if (userRole !== 'admin') {
+      options.push({ key: 'aor', label: 'My AOR' })
+    }
+
+    options.push({ key: 'url', label: 'By URL' })
+    return options
+  }, [userRole])
 
   async function fetchResults(runId: string) {
     const response = await fetch(`/api/site-quality/link-results?runId=${encodeURIComponent(runId)}&status=all&pageSize=100`)
@@ -292,17 +299,13 @@ export function LinkHealthDashboard({
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              {[
-                { key: 'all', label: 'All AORs' },
-                { key: 'aor', label: 'My AOR' },
-                { key: 'url', label: 'By URL' },
-              ].map((item) => (
+              {scopeOptions.map((item) => (
                 <button key={item.key} onClick={() => setScope(item.key as 'all' | 'aor' | 'url')} className={`rounded-full px-3 py-1.5 text-xs ${scope === item.key ? 'bg-blue-300 text-[#001f3a]' : 'bg-white/5 text-blue-100/70'}`}>
                   {item.label}
                 </button>
               ))}
               {scope !== 'all' && (
-                <input value={scopeValue} onChange={(event) => setScopeValue(event.target.value)} placeholder={scope === 'aor' ? 'maddie / leigh / megan / daryl' : 'https://...'} className="rounded-full border border-white/10 bg-[#00182f] px-4 py-2 text-xs text-white outline-none" />
+                <input value={scopeValue} onChange={(event) => setScopeValue(event.target.value)} placeholder={scope === 'aor' ? 'Enter your AOR' : 'https://...'} className="rounded-full border border-white/10 bg-[#00182f] px-4 py-2 text-xs text-white outline-none" />
               )}
             </div>
           </div>

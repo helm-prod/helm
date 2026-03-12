@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { L1_PAGES } from '@/config/l1-pages'
 import { createClient as createAuthClient } from '@/lib/supabase/server'
 import { createServiceRoleClient } from '@/lib/supabase/service'
-import { checkLink } from '@/lib/site-quality/link-checker'
+import { checkLink, extractPageLinks } from '@/lib/site-quality/link-checker'
 
 export const runtime = 'nodejs'
 
@@ -59,32 +59,6 @@ async function getRequestUserId(request: NextRequest, trigger: 'manual' | 'sched
   } = await supabase.auth.getUser()
 
   return user?.id ?? null
-}
-
-function extractLinksFromHtml(html: string, pageUrl: string) {
-  const hrefRegex = /<a[^>]+href=["']([^"']+)["'][^>]*>/gi
-  const links: string[] = []
-  const dedupe = new Set<string>()
-  let match: RegExpExecArray | null
-
-  while ((match = hrefRegex.exec(html)) !== null) {
-    const href = match[1]
-    if (!href || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('tel:')) continue
-
-    let absoluteUrl: string
-    try {
-      absoluteUrl = new URL(href, pageUrl).toString()
-    } catch {
-      continue
-    }
-
-    if (!absoluteUrl.includes('mynavyexchange.com')) continue
-    if (dedupe.has(absoluteUrl)) continue
-    dedupe.add(absoluteUrl)
-    links.push(absoluteUrl)
-  }
-
-  return links
 }
 
 async function handleStart(body: StartBody, request: NextRequest) {
@@ -154,45 +128,76 @@ async function handleScanPage(body: ScanPageBody) {
   let rows: Array<{
     run_id: string
     page_url: string
-    link_url: string
+    link_url: string | null
     source_type: string
     source_label: string
+    panel_image: string
+    slot: string
+    ad_week: number | null
+    ad_year: number | null
     http_status: number | null
     error_message: string | null
     redirect_target: string | null
     aor_owner: string
+    is_broken: boolean
   }> = []
 
   try {
-    const response = await fetch(pageUrl, {
-      headers: { 'User-Agent': 'HelmBot/1.0' },
-      signal: AbortSignal.timeout(10000),
-    })
-    const html = await response.text()
-    const links = extractLinksFromHtml(html, pageUrl)
+    const panels = await extractPageLinks(pageUrl)
 
-    linksChecked = links.length
-    const checkedResults = await Promise.all(
-      links.map(async (linkUrl) => {
-        const checked = await checkLink(linkUrl)
-        return { linkUrl, checked }
-      }),
-    )
+    for (const panel of panels) {
+      linksChecked += 1
 
-    brokenFound = checkedResults.filter((item) => item.checked.httpStatus === 404 || item.checked.httpStatus === null).length
-    redirectFound = checkedResults.filter((item) => item.checked.httpStatus !== null && item.checked.httpStatus >= 300 && item.checked.httpStatus < 400).length
+      if (!panel.isLinked) {
+        rows.push({
+          run_id: runId,
+          page_url: pageUrl,
+          link_url: null,
+          source_type: 'in-page',
+          source_label: body.pageLabel,
+          panel_image: panel.panelImage,
+          slot: panel.slot,
+          ad_week: panel.adWeek,
+          ad_year: panel.adYear,
+          http_status: null,
+          error_message: 'Panel has no link (unlinked panel)',
+          redirect_target: null,
+          aor_owner: body.aorOwner,
+          is_broken: true,
+        })
+        brokenFound += 1
+        continue
+      }
 
-    rows = checkedResults.map((item) => ({
-      run_id: runId,
-      page_url: pageUrl,
-      link_url: item.linkUrl,
-      source_type: 'in-page',
-      source_label: body.pageLabel,
-      http_status: item.checked.httpStatus,
-      error_message: item.checked.errorMessage,
-      redirect_target: item.checked.redirectTarget,
-      aor_owner: body.aorOwner,
-    }))
+      const check = await checkLink(panel.url)
+      const status = check.httpStatus
+      const isBroken = status === null || status === 404 || status >= 400
+      const isRedirect = status !== null && status >= 300 && status < 400
+
+      if (status === 200) {
+        continue
+      }
+
+      if (isBroken) brokenFound += 1
+      if (isRedirect) redirectFound += 1
+
+      rows.push({
+        run_id: runId,
+        page_url: pageUrl,
+        link_url: panel.url,
+        source_type: 'in-page',
+        source_label: body.pageLabel,
+        panel_image: panel.panelImage,
+        slot: panel.slot,
+        ad_week: panel.adWeek,
+        ad_year: panel.adYear,
+        http_status: status,
+        error_message: check.errorMessage,
+        redirect_target: check.redirectTarget,
+        aor_owner: body.aorOwner,
+        is_broken: isBroken,
+      })
+    }
   } catch {
     linksChecked = 0
     brokenFound = 0

@@ -1,3 +1,5 @@
+import * as cheerio from 'cheerio'
+
 export interface LinkResult {
   pageUrl: string
   linkUrl: string
@@ -7,6 +9,15 @@ export interface LinkResult {
   errorMessage: string | null
   redirectTarget: string | null
   aorOwner: string | null
+}
+
+export interface PanelLink {
+  url: string
+  panelImage: string
+  slot: string
+  adWeek: number | null
+  adYear: number | null
+  isLinked: boolean
 }
 
 const AOR_MAP: Array<{ pattern: RegExp; owner: string }> = [
@@ -105,57 +116,98 @@ export async function checkLink(
 
 export async function extractPageLinks(
   pageUrl: string,
-): Promise<Array<Omit<LinkResult, 'httpStatus' | 'errorMessage' | 'redirectTarget'>>> {
+): Promise<PanelLink[]> {
+  const siteBase = 'https://www.mynavyexchange.com'
+
+  let html: string
   try {
     const res = await fetch(pageUrl, {
-      headers: { 'User-Agent': 'HelmBot/1.0' },
-      signal: AbortSignal.timeout(10000),
+      method: 'GET',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; HelmBot/1.0; +https://helm.nexweb.dev)',
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
+      signal: AbortSignal.timeout(15000),
     })
-    const html = await res.text()
-    const hrefRegex = /<a[^>]+href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi
-    const links: Array<Omit<LinkResult, 'httpStatus' | 'errorMessage' | 'redirectTarget'>> = []
-    const dedupe = new Set<string>()
-    let match: RegExpExecArray | null
+    if (!res.ok) throw new Error(`Page fetch returned ${res.status}`)
+    html = await res.text()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Request failed'
+    throw new Error(`Failed to fetch ${pageUrl}: ${message}`)
+  }
 
-    while ((match = hrefRegex.exec(html)) !== null) {
-      const href = match[1]
-      const label = match[2]?.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() ?? ''
-      if (!href || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('tel:')) continue
+  const $ = cheerio.load(html)
+  const panels: PanelLink[] = []
+  const endecaZones = $('#pageContainerTagBody .container.homePage')
 
-      const absolute = href.startsWith('http')
-        ? href
-        : `${getBaseSiteUrl()}${href.startsWith('/') ? '' : '/'}${href}`
+  endecaZones.find('img').each((_, imgEl) => {
+    const src = $(imgEl).attr('src') || ''
+    if (!src.includes('/assets/')) return
 
-      if (!absolute.includes('mynavyexchange.com')) continue
+    const panelImage = src.startsWith('http') ? src : `${siteBase}${src}`
+    const slotMatch = src.match(/-([A-Z]\d+)\.(?:jpg|jpeg|png|gif|svg|webp)/i)
+    const slot = slotMatch ? slotMatch[1].toUpperCase() : ''
 
-      const key = `${pageUrl}|${absolute}|${label}`
-      if (dedupe.has(key)) continue
-      dedupe.add(key)
+    const weekMatch = src.match(/\/(\d{2})-(\d{2})W_/)
+    const adYear = weekMatch ? Number.parseInt(weekMatch[1], 10) : null
+    const adWeek = weekMatch ? Number.parseInt(weekMatch[2], 10) : null
 
-      links.push({
-        pageUrl,
-        linkUrl: absolute,
-        sourceType: 'in-page',
-        sourceLabel: label,
-        aorOwner: resolveAorOwner(absolute),
-      })
+    const anchor = $(imgEl).closest('a')
+    const href = anchor.attr('href') || null
+
+    let url = ''
+    let isLinked = false
+
+    if (href && !href.startsWith('#') && !href.startsWith('javascript')) {
+      isLinked = true
+      url = href.startsWith('http') ? href : `${siteBase}${href}`
     }
 
-    return links
-  } catch {
-    return []
-  }
+    panels.push({ url, panelImage, slot, adWeek, adYear, isLinked })
+  })
+
+  const seen = new Set<string>()
+  return panels.filter((panel) => {
+    if (seen.has(panel.panelImage)) return false
+    seen.add(panel.panelImage)
+    return true
+  })
 }
 
 export async function runLinkCheckForScope(scope: 'all' | 'aor' | 'url', scopeValue?: string | null) {
   const pageUrls = resolveScopePageUrls(scope, scopeValue)
   const extracted = await Promise.all(pageUrls.map((pageUrl) => extractPageLinks(pageUrl)))
-  const links = extracted.flat()
   const results: LinkResult[] = []
 
-  for (const link of links) {
-    const status = await checkLink(link.linkUrl)
-    results.push({ ...link, ...status })
+  for (let pageIndex = 0; pageIndex < extracted.length; pageIndex += 1) {
+    const pageUrl = pageUrls[pageIndex]
+    const panels = extracted[pageIndex]
+
+    for (const panel of panels) {
+      if (!panel.isLinked || !panel.url) {
+        results.push({
+          pageUrl,
+          linkUrl: '',
+          sourceType: 'in-page',
+          sourceLabel: panel.slot,
+          httpStatus: null,
+          errorMessage: 'Panel has no link (unlinked panel)',
+          redirectTarget: null,
+          aorOwner: resolveAorOwner(pageUrl),
+        })
+        continue
+      }
+
+      const status = await checkLink(panel.url)
+      results.push({
+        pageUrl,
+        linkUrl: panel.url,
+        sourceType: 'in-page',
+        sourceLabel: panel.slot,
+        aorOwner: resolveAorOwner(pageUrl),
+        ...status,
+      })
+    }
   }
 
   return {
