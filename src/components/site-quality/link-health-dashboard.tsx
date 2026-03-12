@@ -31,6 +31,7 @@ type LinkHealthResult = SiteQualityLinkResult & {
   slot?: string | null
   ad_week?: number | null
   ad_year?: number | null
+  is_broken?: boolean | null
 }
 
 function formatTimestamp(value: string | null) {
@@ -59,6 +60,20 @@ function toAbsoluteUrl(value: string | null | undefined) {
   return `https://www.mynavyexchange.com${value.startsWith('/') ? '' : '/'}${value}`
 }
 
+function buildAorCounts(rows: LinkHealthResult[]) {
+  const counts: Record<string, number> = {}
+
+  for (const result of rows) {
+    const owner = result.aor_owner?.toLowerCase()
+    const isBroken = result.is_broken ?? (Boolean(result.error_message) || result.http_status === null || result.http_status === 404)
+
+    if (!owner || !isBroken) continue
+    counts[owner] = (counts[owner] ?? 0) + 1
+  }
+
+  return counts
+}
+
 export function LinkHealthDashboard({
   initialRun,
   initialResults,
@@ -82,6 +97,7 @@ export function LinkHealthDashboard({
   const [elapsedMs, setElapsedMs] = useState(0)
   const [currentPage, setCurrentPage] = useState('')
   const [selectedResult, setSelectedResult] = useState<LinkHealthResult | null>(null)
+  const [aorCounts, setAorCounts] = useState<Record<string, number>>(() => buildAorCounts(initialResults as LinkHealthResult[]))
   const [progress, setProgress] = useState<ScanProgress>({
     pagesScanned: 0,
     totalPages: 0,
@@ -110,9 +126,9 @@ export function LinkHealthDashboard({
   const brokenByAor = useMemo(() => {
     return AOR_OPTIONS.map((owner) => ({
       owner,
-      count: results.filter((item) => item.aor_owner === owner && (item.http_status === 404 || item.error_message)).length,
+      count: aorCounts[owner.toLowerCase()] ?? 0,
     }))
-  }, [results])
+  }, [aorCounts])
 
   const scopeOptions = useMemo(() => {
     const options: Array<{ key: 'all' | 'aor' | 'url'; label: string }> = [
@@ -134,8 +150,10 @@ export function LinkHealthDashboard({
       throw new Error(data.error || 'Failed to load link results')
     }
 
+    const nextResults = (data.results ?? []) as LinkHealthResult[]
     setRun(data.run)
-    setResults((data.results ?? []) as SiteQualityLinkResult[])
+    setResults(nextResults)
+    setAorCounts(buildAorCounts(nextResults))
     setCurrentRunId(runId)
   }
 
@@ -303,64 +321,75 @@ export function LinkHealthDashboard({
       )}
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.8fr)]">
-        <section className={`${CARD} p-5`}>
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <h2 className="text-lg font-semibold text-white">Scheduled runs</h2>
-              <div className="mt-3 flex flex-wrap gap-2 text-xs text-blue-100/70">
-                {['Sun 11:30 PM EST', 'Wed 11:30 PM EST', 'Fri 11:30 PM EST'].map((slot) => (
-                  <span key={slot} className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5"><span className="h-2 w-2 rounded-full bg-blue-300" />{slot}</span>
+        <div className="space-y-6">
+          <section className={`${CARD} p-5`}>
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-white">Scheduled runs</h2>
+                <div className="mt-3 flex flex-wrap gap-2 text-xs text-blue-100/70">
+                  {['Sun 11:30 PM EST', 'Wed 11:30 PM EST', 'Fri 11:30 PM EST'].map((slot) => (
+                    <span key={slot} className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5"><span className="h-2 w-2 rounded-full bg-blue-300" />{slot}</span>
+                  ))}
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {scopeOptions.map((item) => (
+                  <button key={item.key} onClick={() => setScope(item.key as 'all' | 'aor' | 'url')} className={`rounded-full px-3 py-1.5 text-xs ${scope === item.key ? 'bg-blue-300 text-[#001f3a]' : 'bg-white/5 text-blue-100/70'}`}>
+                    {item.label}
+                  </button>
                 ))}
+                {scope !== 'all' && (
+                  <input value={scopeValue} onChange={(event) => setScopeValue(event.target.value)} placeholder={scope === 'aor' ? 'Enter your AOR' : 'https://...'} className="rounded-full border border-white/10 bg-[#00182f] px-4 py-2 text-xs text-white outline-none" />
+                )}
               </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {scopeOptions.map((item) => (
-                <button key={item.key} onClick={() => setScope(item.key as 'all' | 'aor' | 'url')} className={`rounded-full px-3 py-1.5 text-xs ${scope === item.key ? 'bg-blue-300 text-[#001f3a]' : 'bg-white/5 text-blue-100/70'}`}>
-                  {item.label}
-                </button>
-              ))}
-              {scope !== 'all' && (
-                <input value={scopeValue} onChange={(event) => setScopeValue(event.target.value)} placeholder={scope === 'aor' ? 'Enter your AOR' : 'https://...'} className="rounded-full border border-white/10 bg-[#00182f] px-4 py-2 text-xs text-white outline-none" />
-              )}
-            </div>
-          </div>
+          </section>
 
-          <div className="mt-5 overflow-hidden rounded-2xl border border-white/10">
-            <table className="min-w-full divide-y divide-white/10 text-sm">
-              <thead className="bg-[#00182f] text-blue-100/60">
-                <tr>
-                  <th className="px-4 py-3 text-left font-medium">URL</th>
-                  <th className="px-4 py-3 text-left font-medium">Source</th>
-                  <th className="px-4 py-3 text-left font-medium">Status</th>
-                  <th className="px-4 py-3 text-left font-medium">Detail</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/10 bg-[rgba(0,20,40,0.35)]">
-                {(results as LinkHealthResult[]).map((row) => (
-                  <tr key={row.id} onClick={() => setSelectedResult(row)} className="cursor-pointer transition-colors hover:bg-white/5">
-                    <td className="px-4 py-3 align-top text-blue-200">
-                      {row.link_url ? (
-                        <a href={row.link_url} target="_blank" rel="noreferrer" className="break-all text-blue-300" onClick={(event) => event.stopPropagation()}>{row.link_url}</a>
-                      ) : (
-                        <span className="italic text-blue-100/45">No link assigned</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 align-top text-blue-100/70">{row.source_label || row.page_url}</td>
-                    <td className="px-4 py-3 align-top">
-                      <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs ${pillTone(row.http_status, Boolean(row.error_message))}`}>
-                        {row.error_message ? 'error' : row.http_status ?? 'n/a'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 align-top text-blue-100/70">{row.error_message || row.redirect_target || row.aor_owner || 'OK'}</td>
+          <section className={`${CARD} p-5`}>
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-white">Issues found</h2>
+              <p className="text-xs text-blue-100/55">{results.length} rows</p>
+            </div>
+
+            <div className="overflow-hidden rounded-2xl border border-white/10">
+              <table className="min-w-full divide-y divide-white/10 text-sm">
+                <thead className="bg-[#00182f] text-blue-100/60">
+                  <tr>
+                    <th className="px-4 py-3 text-left font-medium">URL</th>
+                    <th className="px-4 py-3 text-left font-medium">Source</th>
+                    <th className="px-4 py-3 text-left font-medium">Status</th>
+                    <th className="px-4 py-3 text-left font-medium">Detail</th>
                   </tr>
-                ))}
-                {results.length === 0 && (
-                  <tr><td colSpan={4} className="px-4 py-8 text-center text-blue-100/60">No link results yet.</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
+                </thead>
+                <tbody className="divide-y divide-white/10 bg-[rgba(0,20,40,0.35)]">
+                  {(results as LinkHealthResult[]).map((row) => (
+                    <tr key={row.id} onClick={() => setSelectedResult(row)} className="cursor-pointer transition-colors hover:bg-white/5">
+                      <td className="px-4 py-3 align-top text-blue-200">
+                        {row.link_url ? (
+                          <a href={row.link_url} target="_blank" rel="noreferrer" className="break-all text-blue-300" onClick={(event) => event.stopPropagation()}>{row.link_url}</a>
+                        ) : (
+                          <span className="italic text-blue-100/45">
+                            {row.slot ? `Slot ${row.slot}` : row.panel_image ? row.panel_image.split('/').pop() : 'Unknown panel'}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 align-top text-blue-100/70">{row.source_label || row.page_url}</td>
+                      <td className="px-4 py-3 align-top">
+                        <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs ${pillTone(row.http_status, Boolean(row.error_message))}`}>
+                          {row.error_message ? 'error' : row.http_status ?? 'n/a'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 align-top text-blue-100/70">{row.error_message || row.redirect_target || row.aor_owner || 'OK'}</td>
+                    </tr>
+                  ))}
+                  {results.length === 0 && (
+                    <tr><td colSpan={4} className="px-4 py-8 text-center text-blue-100/60">No link results yet.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
 
         <div className="space-y-6">
           <section className={`${CARD} p-5`}>
