@@ -1,14 +1,14 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { RefreshCw, Send } from 'lucide-react'
-import { ReportRecipientsManager } from '@/components/site-quality/report-recipients-manager'
+import { ChevronDown, ChevronRight, Image as ImageIcon, RefreshCw, Send } from 'lucide-react'
+import { L1_PAGES } from '@/config/l1-pages'
 import type { ReportRecipient } from '@/lib/site-quality/report-recipients'
 import type { SiteQualityLinkResult, SiteQualityLinkRun } from '@/lib/site-quality/types'
 import type { UserRole } from '@/lib/types/database'
 
 const CARD = 'rounded-[24px] border border-[rgba(0,110,180,0.25)] bg-[rgba(0,65,115,0.45)]'
-const AOR_OPTIONS = ['Megan', 'Maddie', 'Daryl'] as const
+const OWNER_OPTIONS = ['All', 'Megan', 'Maddie', 'Daryl'] as const
 
 type ScanState = 'idle' | 'starting' | 'running' | 'complete'
 
@@ -32,6 +32,16 @@ type LinkHealthResult = SiteQualityLinkResult & {
   ad_week?: number | null
   ad_year?: number | null
   is_broken?: boolean | null
+}
+
+type PageGroup = {
+  key: string
+  label: string
+  owner: string
+  pageUrl: string
+  issueCount: number
+  rows: LinkHealthResult[]
+  isClean: boolean
 }
 
 function formatTimestamp(value: string | null) {
@@ -60,6 +70,12 @@ function toAbsoluteUrl(value: string | null | undefined) {
   return `https://www.mynavyexchange.com${value.startsWith('/') ? '' : '/'}${value}`
 }
 
+function normalizeOwner(value: string | null | undefined) {
+  if (!value) return ''
+  const lowered = value.toLowerCase()
+  return lowered.charAt(0).toUpperCase() + lowered.slice(1)
+}
+
 function buildAorCounts(rows: LinkHealthResult[]) {
   const counts: Record<string, number> = {}
 
@@ -72,6 +88,101 @@ function buildAorCounts(rows: LinkHealthResult[]) {
   }
 
   return counts
+}
+
+function resolvePageLabel(row: LinkHealthResult) {
+  return row.page_label || row.source_label || L1_PAGES.find((page) => page.url === row.page_url)?.label || row.page_url
+}
+
+function resolvePageOwner(rows: LinkHealthResult[], label: string, pageUrl: string) {
+  return normalizeOwner(rows[0]?.aor_owner) || normalizeOwner(L1_PAGES.find((page) => page.label === label || page.url === pageUrl)?.aorOwner) || 'Unassigned'
+}
+
+function buildPageGroups(rows: LinkHealthResult[]) {
+  const grouped = new Map<string, PageGroup>()
+
+  for (const page of L1_PAGES) {
+    grouped.set(page.label, {
+      key: page.label,
+      label: page.label,
+      owner: normalizeOwner(page.aorOwner),
+      pageUrl: page.url,
+      issueCount: 0,
+      rows: [],
+      isClean: true,
+    })
+  }
+
+  for (const row of rows) {
+    const label = resolvePageLabel(row)
+    const existing = grouped.get(label)
+
+    if (existing) {
+      existing.rows.push(row)
+      existing.issueCount += 1
+      existing.isClean = false
+      if (!existing.pageUrl && row.page_url) existing.pageUrl = row.page_url
+      if (!existing.owner && row.aor_owner) existing.owner = normalizeOwner(row.aor_owner)
+      continue
+    }
+
+    grouped.set(label, {
+      key: label,
+      label,
+      owner: resolvePageOwner([row], label, row.page_url),
+      pageUrl: row.page_url,
+      issueCount: 1,
+      rows: [row],
+      isClean: false,
+    })
+  }
+
+  return Array.from(grouped.values()).sort((a, b) => {
+    if (a.issueCount === 0 && b.issueCount > 0) return 1
+    if (a.issueCount > 0 && b.issueCount === 0) return -1
+    if (a.issueCount !== b.issueCount) return b.issueCount - a.issueCount
+    return a.label.localeCompare(b.label)
+  })
+}
+
+function getStatusMeta(result: LinkHealthResult) {
+  if (!result.link_url) {
+    return {
+      label: 'unlinked',
+      className: 'border-[rgba(245,158,11,0.2)] bg-[rgba(245,158,11,0.12)] text-amber-300',
+      ownerBucket: 'unlinked' as const,
+    }
+  }
+
+  if (result.http_status === 404) {
+    return {
+      label: '404',
+      className: 'border-[rgba(239,68,68,0.2)] bg-[rgba(239,68,68,0.12)] text-red-300',
+      ownerBucket: 'broken' as const,
+    }
+  }
+
+  if (result.http_status === 403) {
+    return {
+      label: '403',
+      className: 'border-[rgba(148,163,184,0.2)] bg-[rgba(148,163,184,0.12)] text-slate-300',
+      ownerBucket: 'blocked' as const,
+    }
+  }
+
+  if (result.http_status !== null && result.http_status >= 300 && result.http_status < 400) {
+    return {
+      label: '301',
+      className: 'border-[rgba(56,189,248,0.2)] bg-[rgba(56,189,248,0.12)] text-sky-300',
+      ownerBucket: 'redirect' as const,
+    }
+  }
+
+  return {
+    label: result.http_status?.toString() ?? 'error',
+    className: 'border-[rgba(239,68,68,0.2)] bg-[rgba(239,68,68,0.12)] text-red-300',
+    ownerBucket: 'broken' as const,
+  }
 }
 
 export function LinkHealthDashboard({
@@ -104,6 +215,8 @@ export function LinkHealthDashboard({
     linksChecked: 0,
     brokenFound: 0,
   })
+  const [selectedAorFilter, setSelectedAorFilter] = useState<(typeof OWNER_OPTIONS)[number]>('All')
+  const [collapsedPages, setCollapsedPages] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
     if (scanState !== 'running' || !scanStartTime) return
@@ -123,13 +236,6 @@ export function LinkHealthDashboard({
     redirects: run?.redirect_count ?? results.filter((item) => item.http_status !== null && item.http_status >= 300 && item.http_status < 400).length,
   }), [run, progress, results])
 
-  const brokenByAor = useMemo(() => {
-    return AOR_OPTIONS.map((owner) => ({
-      owner,
-      count: aorCounts[owner.toLowerCase()] ?? 0,
-    }))
-  }, [aorCounts])
-
   const scopeOptions = useMemo(() => {
     const options: Array<{ key: 'all' | 'aor' | 'url'; label: string }> = [
       { key: 'all', label: 'All AORs' },
@@ -142,6 +248,47 @@ export function LinkHealthDashboard({
     options.push({ key: 'url', label: 'By URL' })
     return options
   }, [userRole])
+
+  const pageGroups = useMemo(() => buildPageGroups(results as LinkHealthResult[]), [results])
+
+  useEffect(() => {
+    setCollapsedPages((current) => {
+      const next = { ...current }
+      for (const group of pageGroups) {
+        if (!(group.key in next)) {
+          next[group.key] = group.issueCount === 0
+        }
+      }
+      return next
+    })
+  }, [pageGroups])
+
+  const filteredGroups = useMemo(() => {
+    if (selectedAorFilter === 'All') return pageGroups
+    return pageGroups.filter((group) => group.owner.toLowerCase() === selectedAorFilter.toLowerCase())
+  }, [pageGroups, selectedAorFilter])
+
+  const ownerStats = useMemo(() => {
+    const statsMap = new Map<string, { owner: string; total: number; unlinked: number; broken: number; blocked: number; redirect: number }>()
+
+    for (const row of results as LinkHealthResult[]) {
+      const owner = normalizeOwner(row.aor_owner)
+      if (!owner || owner === 'Leigh') continue
+
+      if (!statsMap.has(owner)) {
+        statsMap.set(owner, { owner, total: 0, unlinked: 0, broken: 0, blocked: 0, redirect: 0 })
+      }
+
+      const current = statsMap.get(owner) as { owner: string; total: number; unlinked: number; broken: number; blocked: number; redirect: number }
+      const status = getStatusMeta(row)
+      current.total += 1
+      current[status.ownerBucket] += 1
+    }
+
+    return Array.from(statsMap.values()).sort((a, b) => b.total - a.total || a.owner.localeCompare(b.owner))
+  }, [results])
+
+  const maxOwnerTotal = ownerStats[0]?.total ?? 1
 
   async function fetchResults(runId: string) {
     const response = await fetch(`/api/site-quality/link-results?runId=${encodeURIComponent(runId)}&status=all&pageSize=100`)
@@ -296,7 +443,7 @@ export function LinkHealthDashboard({
         {[
           ['Pages scanned', stats.pages],
           ['Links checked', stats.links],
-          ['Broken (404)', stats.broken],
+          ['Issues found', stats.broken],
           ['Redirects (301)', stats.redirects],
         ].map(([label, value]) => (
           <div key={label} className={`${CARD} p-5`}>
@@ -320,96 +467,163 @@ export function LinkHealthDashboard({
         </section>
       )}
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.8fr)]">
-        <div className="space-y-6">
-          <section className={`${CARD} p-5`}>
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <h2 className="text-lg font-semibold text-white">Scheduled runs</h2>
-                <div className="mt-3 flex flex-wrap gap-2 text-xs text-blue-100/70">
-                  {['Sun 11:30 PM EST', 'Wed 11:30 PM EST', 'Fri 11:30 PM EST'].map((slot) => (
-                    <span key={slot} className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5"><span className="h-2 w-2 rounded-full bg-blue-300" />{slot}</span>
-                  ))}
-                </div>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {scopeOptions.map((item) => (
-                  <button key={item.key} onClick={() => setScope(item.key as 'all' | 'aor' | 'url')} className={`rounded-full px-3 py-1.5 text-xs ${scope === item.key ? 'bg-blue-300 text-[#001f3a]' : 'bg-white/5 text-blue-100/70'}`}>
-                    {item.label}
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_280px]">
+        <section className={`${CARD} p-5`}>
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <h2 className="text-lg font-semibold text-white">Issues by page</h2>
+            <div className="flex flex-wrap gap-2">
+              {OWNER_OPTIONS.map((option) => {
+                const isActive = selectedAorFilter === option
+                return (
+                  <button
+                    key={option}
+                    onClick={() => setSelectedAorFilter(option)}
+                    className={`rounded-full border px-3 py-1.5 text-xs transition-colors ${
+                      isActive
+                        ? 'border-[rgba(0,110,180,0.5)] bg-[rgba(0,110,180,0.3)] text-[#93c5fd]'
+                        : 'border-transparent bg-white/5 text-blue-100/55 hover:border-[rgba(0,110,180,0.25)] hover:text-blue-100/80'
+                    }`}
+                  >
+                    {option}
                   </button>
-                ))}
-                {scope !== 'all' && (
-                  <input value={scopeValue} onChange={(event) => setScopeValue(event.target.value)} placeholder={scope === 'aor' ? 'Enter your AOR' : 'https://...'} className="rounded-full border border-white/10 bg-[#00182f] px-4 py-2 text-xs text-white outline-none" />
-                )}
-              </div>
+                )
+              })}
             </div>
-          </section>
+          </div>
 
-          <section className={`${CARD} p-5`}>
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-white">Issues found</h2>
-              <p className="text-xs text-blue-100/55">{results.length} rows</p>
-            </div>
+          <div className="mt-5 space-y-3">
+            {filteredGroups.map((group) => {
+              const isCollapsed = collapsedPages[group.key] ?? group.issueCount === 0
+              return (
+                <div key={group.key} className={`overflow-hidden rounded-2xl border border-[rgba(0,110,180,0.18)] bg-[rgba(0,20,40,0.28)] ${group.isClean ? 'opacity-55' : ''}`}>
+                  <button
+                    onClick={() => setCollapsedPages((current) => ({ ...current, [group.key]: !isCollapsed }))}
+                    className="flex w-full items-center gap-3 bg-[rgba(0,25,55,0.4)] px-4 py-3 text-left transition hover:bg-[rgba(0,35,75,0.5)]"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[12px] font-medium text-slate-300">{group.label}</div>
+                      <div className="mt-1 text-[10px] text-slate-600">{group.owner}</div>
+                    </div>
+                    {group.issueCount > 0 ? (
+                      <span className="rounded-full border border-[rgba(248,113,113,0.2)] bg-[rgba(248,113,113,0.15)] px-2.5 py-1 text-[10px] font-medium text-[#fca5a5]">
+                        {group.issueCount} issues
+                      </span>
+                    ) : (
+                      <span className="rounded-full border border-[rgba(52,211,153,0.15)] bg-[rgba(52,211,153,0.1)] px-2.5 py-1 text-[10px] font-medium text-emerald-300">
+                        ✓ clean
+                      </span>
+                    )}
+                    {isCollapsed ? (
+                      <ChevronRight className="h-4 w-4 shrink-0 text-[#1e3a5f]" />
+                    ) : (
+                      <ChevronDown className="h-4 w-4 shrink-0 text-[#1e3a5f]" />
+                    )}
+                  </button>
 
-            <div className="overflow-hidden rounded-2xl border border-white/10">
-              <table className="min-w-full divide-y divide-white/10 text-sm">
-                <thead className="bg-[#00182f] text-blue-100/60">
-                  <tr>
-                    <th className="px-4 py-3 text-left font-medium">URL</th>
-                    <th className="px-4 py-3 text-left font-medium">Source</th>
-                    <th className="px-4 py-3 text-left font-medium">Status</th>
-                    <th className="px-4 py-3 text-left font-medium">Detail</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/10 bg-[rgba(0,20,40,0.35)]">
-                  {(results as LinkHealthResult[]).map((row) => (
-                    <tr key={row.id} onClick={() => setSelectedResult(row)} className="cursor-pointer transition-colors hover:bg-white/5">
-                      <td className="px-4 py-3 align-top text-blue-200">
-                        {row.link_url ? (
-                          <a href={row.link_url} target="_blank" rel="noreferrer" className="break-all text-blue-300" onClick={(event) => event.stopPropagation()}>{row.link_url}</a>
-                        ) : (
-                          <span className="italic text-blue-100/45">
-                            {row.slot ? `Slot ${row.slot}` : row.panel_image ? row.panel_image.split('/').pop() : 'Unknown panel'}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 align-top text-blue-100/70">{row.source_label || row.page_url}</td>
-                      <td className="px-4 py-3 align-top">
-                        <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs ${pillTone(row.http_status, Boolean(row.error_message))}`}>
-                          {row.error_message ? 'error' : row.http_status ?? 'n/a'}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 align-top text-blue-100/70">{row.error_message || row.redirect_target || row.aor_owner || 'OK'}</td>
-                    </tr>
-                  ))}
-                  {results.length === 0 && (
-                    <tr><td colSpan={4} className="px-4 py-8 text-center text-blue-100/60">No link results yet.</td></tr>
+                  {!isCollapsed && (
+                    <div className="divide-y divide-[rgba(0,110,180,0.12)]">
+                      {group.rows.map((result) => {
+                        const status = getStatusMeta(result)
+                        const metaParts = [
+                          result.ad_week ? `Wk ${result.ad_week}` : null,
+                          result.slot ? `Slot ${result.slot}` : null,
+                        ].filter(Boolean)
+
+                        return (
+                          <button
+                            key={result.id}
+                            onClick={() => setSelectedResult(result)}
+                            className="flex w-full items-center gap-4 px-4 py-3 text-left transition hover:bg-[rgba(0,70,140,0.2)]"
+                          >
+                            <div className="relative h-[50px] w-[80px] shrink-0 overflow-hidden rounded-[4px] border border-[rgba(0,110,180,0.25)] bg-[rgba(0,35,80,0.8)]">
+                              {result.panel_image ? (
+                                <img src={toAbsoluteUrl(result.panel_image)} alt={result.slot || group.label} className="h-full w-full object-cover" />
+                              ) : (
+                                <div className="flex h-full w-full items-center justify-center text-slate-600">
+                                  <ImageIcon className="h-5 w-5" />
+                                </div>
+                              )}
+                              {result.slot && (
+                                <span className="absolute bottom-1 right-1 rounded bg-[rgba(0,15,35,0.72)] px-1 py-0.5 font-mono text-[9px] text-slate-500">
+                                  {result.slot}
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-[12px] font-medium text-slate-300">{group.label}</div>
+                              {metaParts.length > 0 && <div className="mt-1 text-[11px] text-slate-700">{metaParts.join(' · ')}</div>}
+                            </div>
+
+                            <div className="flex items-center gap-3">
+                              <span className={`rounded-full border px-2.5 py-1 text-[11px] font-medium ${status.className}`}>
+                                {status.label}
+                              </span>
+                              <span className="text-[11px] text-[#1e3a5f]">›</span>
+                            </div>
+                          </button>
+                        )
+                      })}
+                    </div>
                   )}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        </div>
-
-        <div className="space-y-6">
-          <section className={`${CARD} p-5`}>
-            <h2 className="text-lg font-semibold text-white">Broken by AOR</h2>
-            <div className="mt-4 space-y-3">
-              {brokenByAor.map((row) => (
-                <div key={row.owner} className="flex items-center justify-between rounded-2xl bg-white/5 px-4 py-3">
-                  <span className="text-sm text-white">{row.owner}</span>
-                  <span className="text-sm font-medium text-red-200">{row.count}</span>
                 </div>
-              ))}
+              )
+            })}
+          </div>
+        </section>
+
+        <div className="space-y-3">
+          <section className={`${CARD} p-5`}>
+            <h2 className="text-lg font-semibold text-white">Issues by owner</h2>
+            <div className="mt-4 space-y-3">
+              {ownerStats.map((owner) => {
+                const parts = [
+                  owner.unlinked > 0 ? `${owner.unlinked} unlinked` : null,
+                  owner.broken > 0 ? `${owner.broken} broken` : null,
+                  owner.blocked > 0 ? `${owner.blocked} blocked (403)` : null,
+                  owner.redirect > 0 ? `${owner.redirect} redirects` : null,
+                ].filter(Boolean)
+
+                return (
+                  <div key={owner.owner} className="border-b border-[rgba(0,110,180,0.12)] pb-3 last:border-b-0 last:pb-0">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-slate-300">{owner.owner}</span>
+                      <span className="text-[12px] text-slate-400">{owner.total} issues</span>
+                    </div>
+                    {parts.length > 0 && <div className="mt-1 text-[11px] text-slate-700">{parts.join(' · ')}</div>}
+                    <div className="mt-3 h-[3px] rounded-full bg-[rgba(0,40,90,0.8)]">
+                      <div className="h-[3px] rounded-full bg-[rgba(0,110,180,0.6)]" style={{ width: `${(owner.total / maxOwnerTotal) * 100}%` }} />
+                    </div>
+                  </div>
+                )
+              })}
             </div>
-            <button onClick={handleSendReport} disabled={sending || !run?.id || isScanning} className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-full bg-indigo-300 px-4 py-3 text-sm font-medium text-[#001f3a] disabled:opacity-60">
-              <Send className="h-4 w-4" />
-              {sending ? 'Sending...' : 'Generate & send report'}
-            </button>
-            <p className="mt-3 min-h-5 text-sm text-blue-100/70">{message ?? ' '}</p>
           </section>
 
-          {userRole === 'admin' && <ReportRecipientsManager initialRecipients={initialRecipients} />}
+          <section className={`${CARD} p-5`}>
+            <h2 className="text-lg font-semibold text-white">Schedule</h2>
+            <div className="mt-4 space-y-3">
+              {['Sun 11:30 PM EST', 'Wed 11:30 PM EST', 'Fri 11:30 PM EST'].map((slot) => {
+                const [day, ...rest] = slot.split(' ')
+                return (
+                  <div key={slot} className="flex items-center justify-between rounded-2xl bg-[rgba(0,20,40,0.35)] px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <span className="h-2 w-2 rounded-full bg-blue-300" />
+                      <span className="text-sm text-slate-300">{day}</span>
+                    </div>
+                    <span className="text-xs text-blue-100/60">{rest.join(' ')}</span>
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+
+          <button onClick={handleSendReport} disabled={sending || !run?.id || isScanning} className="inline-flex w-full items-center justify-center gap-2 rounded-[20px] border border-[rgba(0,110,180,0.3)] bg-[rgba(0,110,180,0.22)] px-4 py-3 text-sm font-medium text-[#93c5fd] transition hover:bg-[rgba(0,110,180,0.3)] disabled:opacity-60">
+            <Send className="h-4 w-4" />
+            ✉ Generate & send report
+          </button>
+
+          <p className="px-1 text-sm text-blue-100/70">{message ?? ' '}</p>
         </div>
       </div>
 
