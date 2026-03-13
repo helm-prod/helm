@@ -41,12 +41,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid reorder payload' }, { status: 400 })
   }
 
-  const { error } = await supabase
-    .from('wog_events')
-    .upsert(updates, { onConflict: 'id' })
+  for (const update of updates) {
+    const { error } = await supabase
+      .from('wog_events')
+      .update({ sort_order: update.sort_order, status: update.status })
+      .eq('id', update.id)
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 })
+    }
   }
 
   return NextResponse.json({ success: true })
