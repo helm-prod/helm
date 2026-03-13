@@ -35,7 +35,7 @@ export async function getAuthenticatedPage() {
   await page.goto(loginUrl, { waitUntil: 'networkidle' })
   await page.fill('input[type="email"], input[name="email"], #email', process.env.NEXCOM_BOT_EMAIL!)
   await page.fill('input[type="password"], input[name="password"], #password', process.env.NEXCOM_BOT_PASSWORD!)
-  await page.click('input[name="/atg/userprofiling/ProfileFormHandler.login"], button[type="submit"]')
+  await page.click('button[type="submit"]')
   await page.waitForNavigation({ waitUntil: 'networkidle', timeout: 15000 })
 
   const isLoggedIn = await page.evaluate(() => {
