@@ -29,6 +29,7 @@ async function getAuthenticatedPage() {
 
   const context = await browser.newContext({
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    viewport: { width: 1280, height: 900 },
   })
 
   const page = await context.newPage()
@@ -43,29 +44,27 @@ async function getAuthenticatedPage() {
   await page.screenshot({ path: '/tmp/login-page.png', fullPage: false })
 
   try {
-    // Email field — ATG uses type="text" for email inputs, not type="email"
-    // Use click + type instead of fill() to trigger ATG's JS event handlers
-    const emailSelector = 'input[name="email"], input[id*="email"], input[name*="login"], input[placeholder*="email" i], input[type="email"], input[type="text"]:first-of-type'
+    // Target by exact ID — we confirmed id="email" exists on this page
+    const emailInput = page.locator('#email').first()
+    await emailInput.waitFor({ state: 'visible', timeout: 20000 })
 
-    await page.waitForSelector(emailSelector, { state: 'visible', timeout: 20000 })
-    await page.click(emailSelector)
-    await page.waitForTimeout(300)
-    await page.type(emailSelector, process.env.NEXCOM_BOT_EMAIL!, { delay: 50 })
+    // Use focus() instead of click() to bypass viewport position check
+    await emailInput.focus()
+    await page.waitForTimeout(200)
+    await emailInput.type(process.env.NEXCOM_BOT_EMAIL!, { delay: 50 })
 
     console.log('Email typed')
 
-    // Password field
-    const passwordSelector = 'input[type="password"]'
-    await page.waitForSelector(passwordSelector, { state: 'visible', timeout: 10000 })
-    await page.click(passwordSelector)
-    await page.waitForTimeout(300)
-    await page.type(passwordSelector, process.env.NEXCOM_BOT_PASSWORD!, { delay: 50 })
+    const passwordInput = page.locator('input[type="password"]').first()
+    await passwordInput.waitFor({ state: 'visible', timeout: 10000 })
+    await passwordInput.focus()
+    await page.waitForTimeout(200)
+    await passwordInput.type(process.env.NEXCOM_BOT_PASSWORD!, { delay: 50 })
 
     console.log('Password typed')
     await page.screenshot({ path: '/tmp/login-filled.png', fullPage: false })
 
-    // Submit — try multiple strategies
-    // Strategy 1: Press Enter on the password field (most reliable for ATG)
+    // Submit via Enter key on password field
     await page.keyboard.press('Enter')
     console.log('Pressed Enter to submit')
 
@@ -78,28 +77,20 @@ async function getAuthenticatedPage() {
     await page.waitForTimeout(2000)
 
     const postLoginUrl = page.url()
-    const postLoginTitle = await page.title()
     console.log(`Post-login URL: ${postLoginUrl}`)
-    console.log(`Post-login title: ${postLoginTitle}`)
     await page.screenshot({ path: '/tmp/post-login.png', fullPage: false })
 
-    // If still on sign-in page, try clicking the button directly
+    // If still on login page, try clicking the SIGN IN button via JS
     if (postLoginUrl.includes('sign-in') || postLoginUrl.includes('login')) {
-      console.log('Still on login page after Enter — trying button click')
-      const clicked = await page.evaluate(() => {
-        // Look for the sign-in button by value or text
-        const candidates = Array.from(document.querySelectorAll('input[type="submit"], button[type="submit"], button, a'))
-        const btn = candidates.find((el) => {
-          const text = (el.textContent || (el as HTMLInputElement).value || '').toUpperCase().trim()
-          return text === 'SIGN IN' || text === 'LOGIN' || text === 'LOG IN' || text === 'SUBMIT'
-        }) as HTMLElement | null
-        if (btn) {
-          btn.click()
-          return btn.tagName + ':' + ((btn as HTMLInputElement).value || btn.textContent?.trim())
-        }
-        return null
+      console.log('Still on login page — trying JS button click')
+      await page.evaluate(() => {
+        const btn = Array.from(document.querySelectorAll('input[type="submit"], button[type="submit"], button, a'))
+          .find((el) => {
+            const text = (el.textContent || (el as HTMLInputElement).value || '').toUpperCase().trim()
+            return text === 'SIGN IN' || text === 'LOGIN' || text === 'SUBMIT'
+          }) as HTMLElement | null
+        btn?.click()
       })
-      console.log(`Button click result: ${clicked}`)
       await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {})
       await page.waitForTimeout(2000)
       await page.screenshot({ path: '/tmp/post-login-retry.png', fullPage: false })
@@ -111,12 +102,10 @@ async function getAuthenticatedPage() {
   }
 
   const finalUrl = page.url()
-  const isLoggedIn = !finalUrl.includes('sign-in') && !finalUrl.includes('login') ||
+  const isLoggedIn = (!finalUrl.includes('sign-in') && !finalUrl.includes('/login')) ||
     await page.evaluate(() => {
-      return (
-        document.body.innerText.includes('Hi ') ||
+      return document.body.innerText.includes('Hi ') ||
         !!document.querySelector('[href*="sign-out"], [href*="logout"], [href*="signout"]')
-      )
     })
 
   console.log(`Final URL: ${finalUrl}`)
