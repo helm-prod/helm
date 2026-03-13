@@ -1,96 +1,121 @@
 'use client'
 
-import { Fragment, type ReactNode, useEffect, useMemo, useState } from 'react'
+import { type ReactNode, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { Activity, BarChart3, Bug, CalendarDays, ChevronDown, ChevronRight, GalleryHorizontalEnd, Gauge, Package, Search, Shield } from 'lucide-react'
-import { createClient } from '@/lib/supabase/client'
-import { getEffectiveAccess, getUserRole } from '@/lib/permissions'
-import { NAV_ITEMS, formatRoleName } from '@/lib/nav-config'
-import type { Profile, UserRole } from '@/lib/types/database'
+import {
+  Activity,
+  BarChart3,
+  Bug,
+  CalendarDays,
+  ChevronDown,
+  ChevronRight,
+  Files,
+  GalleryHorizontalEnd,
+  Gauge,
+  Package,
+  Search,
+  Shield,
+} from 'lucide-react'
 import { MiniRadar } from '@/components/radar-animation'
+import { createClient } from '@/lib/supabase/client'
+import { formatRoleName, isNavSection, NAV_ITEMS, NAV_STRUCTURE, type NavItem, type SidebarNavItem } from '@/lib/nav-config'
+import { getEffectiveAccess, getUserRole } from '@/lib/permissions'
+import { normalizeUserRole, WOG_EDITOR_ALLOWED_HREFS } from '@/lib/roles'
+import type { Profile, UserRole } from '@/lib/types/database'
 
 type IconComponent = ({ className }: { className?: string }) => ReactNode
+type ExpandedSections = Record<string, boolean>
 
 const ICON_MAP: Record<string, IconComponent> = {
+  Activity,
+  BarChart3,
+  Bug,
+  Calendar: CalendarIcon,
+  CalendarDays,
+  CalendarRange: CalendarRangeIcon,
+  Code: CodeIcon,
+  Files,
+  GalleryHorizontalEnd,
+  Gauge,
+  Layout: LayoutIcon,
   LayoutDashboard: LayoutDashboardIcon,
   ListTodo: ListTodoIcon,
-  CalendarRange: CalendarRangeIcon,
-  Calendar: CalendarIcon,
-  CalendarDays: CalendarDays,
-  Code: CodeIcon,
-  Layout: LayoutIcon,
-  GalleryHorizontalEnd: GalleryHorizontalEnd,
-  Upload: UploadIcon,
-  Settings2: Settings2Icon,
-  BookOpen: BookOpenIcon,
-  MessageSquare: MessageSquareIcon,
-  Bug: Bug,
-  Settings: SettingsIcon,
-  User: UserIcon,
-  Shield: ShieldIcon,
-  Search: SearchIcon,
-  Package: PackageIcon,
   Lock: LockIcon,
+  MessageSquare: MessageSquareIcon,
+  Package,
+  Search,
+  Settings: SettingsIcon,
+  Settings2: Settings2Icon,
+  Shield,
+  Upload: UploadIcon,
+  User: UserIcon,
+  BookOpen: BookOpenIcon,
 }
 
-const ANALYTICS_NAV_ITEMS = [
-  {
-    slug: 'analytics-search',
-    label: 'Search Performance',
-    href: '/analytics/search',
-    Icon: Search,
-  },
-  {
-    slug: 'analytics-products',
-    label: 'Products',
-    href: '/analytics/products',
-    Icon: Package,
-  },
-  {
-    slug: 'analytics-performance',
-    label: 'Site Performance',
-    href: '/analytics/performance',
-    Icon: Activity,
-  },
-  {
-    slug: 'analytics-speed',
-    label: 'Site Speed',
-    href: '/analytics/speed',
-    Icon: Gauge,
-  },
-] as const
+const LOCAL_STORAGE_PREFIX = 'helm_nav_open_'
 
-const ANALYTICS_SLUGS = new Set<string>(ANALYTICS_NAV_ITEMS.map((item) => item.slug))
+function isLinkActive(href: string, pathname: string) {
+  return pathname === href || (href !== '/dashboard' && pathname.startsWith(`${href}/`))
+}
 
-const SITE_QUALITY_NAV_ITEMS = [
-  {
-    slug: 'site-quality-link-health',
-    label: 'Link Health',
-    href: '/site-quality/link-health',
-    Icon: Shield,
-  },
-  {
-    slug: 'site-quality-panel-intelligence',
-    label: 'Panel Intelligence',
-    href: '/site-quality/panel-intelligence',
-    Icon: Shield,
-  },
-] as const
+function filterNavForRole(items: SidebarNavItem[], role: UserRole): SidebarNavItem[] {
+  const roleFiltered = items
+    .map((item) => {
+      if (item.roles && !item.roles.includes(role)) {
+        return null
+      }
 
-const SITE_QUALITY_SLUGS = new Set<string>(SITE_QUALITY_NAV_ITEMS.map((item) => item.slug))
+      if (isNavSection(item)) {
+        const children = item.children.filter((child) => !child.roles || child.roles.includes(role))
+        return children.length > 0 ? { ...item, children } : null
+      }
+
+      return item
+    })
+    .filter(Boolean) as SidebarNavItem[]
+
+  if (role !== 'wog_editor') {
+    return roleFiltered
+  }
+
+  return roleFiltered
+    .map((item) => {
+      if (isNavSection(item)) {
+        const children = item.children.filter((child) => WOG_EDITOR_ALLOWED_HREFS.includes(child.href))
+        return children.length > 0 ? { ...item, children } : null
+      }
+
+      return WOG_EDITOR_ALLOWED_HREFS.includes(item.href) ? item : null
+    })
+    .filter(Boolean) as SidebarNavItem[]
+}
+
+function makeInitialAccessSet(role: UserRole) {
+  if (role === 'admin') {
+    return new Set(NAV_ITEMS.map((item) => item.slug))
+  }
+
+  if (role === 'wog_editor') {
+    return new Set(['wog'])
+  }
+
+  return new Set<string>()
+}
+
+function shouldRenderItem(item: NavItem, role: UserRole) {
+  return !(item.adminOnly && role !== 'admin')
+}
 
 export function Sidebar({ profile, myQueueCount }: { profile: Profile; myQueueCount: number }) {
   const pathname = usePathname()
   const router = useRouter()
   const supabase = useMemo(() => createClient(), [])
 
-  const [role, setRole] = useState<UserRole>(profile.role)
-  const [isAnalyticsExpanded, setIsAnalyticsExpanded] = useState(true)
-  const [isSiteQualityExpanded, setIsSiteQualityExpanded] = useState(true)
-  const [accessibleSlugs, setAccessibleSlugs] = useState<Set<string>>(
-    () => new Set(profile.role === 'admin' ? NAV_ITEMS.map((item) => item.slug) : []),
-  )
+  const initialRole = normalizeUserRole(profile.role)
+  const [role, setRole] = useState<UserRole>(initialRole)
+  const [accessibleSlugs, setAccessibleSlugs] = useState<Set<string>>(() => makeInitialAccessSet(initialRole))
+  const [expandedSections, setExpandedSections] = useState<ExpandedSections>({})
 
   useEffect(() => {
     let active = true
@@ -117,44 +142,134 @@ export function Sidebar({ profile, myQueueCount }: { profile: Profile; myQueueCo
     }
   }, [supabase])
 
+  const navItems = useMemo(
+    () =>
+      filterNavForRole(NAV_STRUCTURE, role)
+        .map((item) => {
+          if (isNavSection(item)) {
+            const children = item.children.filter((child) => shouldRenderItem(child, role))
+            return children.length > 0 ? { ...item, children } : null
+          }
+
+          return shouldRenderItem(item, role) ? item : null
+        })
+        .filter(Boolean) as SidebarNavItem[],
+    [role],
+  )
+
+  useEffect(() => {
+    const nextState: ExpandedSections = {}
+
+    for (const item of navItems) {
+      if (!isNavSection(item)) continue
+
+      const storageKey = `${LOCAL_STORAGE_PREFIX}${item.label}`
+      const storedValue = window.localStorage.getItem(storageKey)
+      const hasActiveChild = item.children.some((child) => isLinkActive(child.href, pathname))
+
+      nextState[item.id] = storedValue === null ? true : storedValue === 'true' || hasActiveChild
+    }
+
+    setExpandedSections(nextState)
+  }, [navItems, pathname])
+
+  useEffect(() => {
+    setExpandedSections((current) => {
+      const next = { ...current }
+      let changed = false
+
+      for (const item of navItems) {
+        if (!isNavSection(item)) continue
+
+        if (item.children.some((child) => isLinkActive(child.href, pathname)) && !next[item.id]) {
+          next[item.id] = true
+          window.localStorage.setItem(`${LOCAL_STORAGE_PREFIX}${item.label}`, 'true')
+          changed = true
+        }
+      }
+
+      return changed ? next : current
+    })
+  }, [navItems, pathname])
+
   async function handleSignOut() {
     await supabase.auth.signOut()
     router.push('/login')
     router.refresh()
   }
 
+  function toggleSection(sectionId: string, label: string) {
+    setExpandedSections((current) => {
+      const nextValue = !(current[sectionId] ?? true)
+      window.localStorage.setItem(`${LOCAL_STORAGE_PREFIX}${label}`, String(nextValue))
+      return { ...current, [sectionId]: nextValue }
+    })
+  }
+
   const roleLabel = formatRoleName(role)
 
-  const navItems = NAV_ITEMS.filter(
-    (item) =>
-      !ANALYTICS_SLUGS.has(item.slug) &&
-      !SITE_QUALITY_SLUGS.has(item.slug) &&
-      !(item.adminOnly && role !== 'admin')
-  )
-  const isAnalyticsRoute = pathname.startsWith('/analytics/')
-  const isSiteQualityRoute = pathname.startsWith('/site-quality/')
-  const analyticsHeaderClass = `group flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-sm font-medium transition-colors ${
-    isAnalyticsRoute
-      ? 'border-brand-700 bg-nex-navyLight/70 text-white shadow-[inset_4px_0_0_0_#CFA751]'
-      : 'border-transparent text-brand-100 hover:border-brand-700 hover:bg-brand-800/70 hover:text-white'
-  }`
-  const siteQualityHeaderClass = `group flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-sm font-medium transition-colors ${
-    isSiteQualityRoute
-      ? 'border-brand-700 bg-nex-navyLight/70 text-white shadow-[inset_4px_0_0_0_#CFA751]'
-      : 'border-transparent text-brand-100 hover:border-brand-700 hover:bg-brand-800/70 hover:text-white'
-  }`
+  function renderNavLink(item: NavItem, isChild = false) {
+    const Icon = ICON_MAP[item.icon] ?? LayoutDashboardIcon
+    const isActive = isLinkActive(item.href, pathname)
+    const hasAccess = accessibleSlugs.has(item.slug)
+    const commonClass = `group flex items-center justify-between rounded-xl border py-2.5 text-sm font-medium transition-colors ${
+      isChild ? 'pl-10 pr-3' : 'px-3'
+    } ${
+      isActive
+        ? 'border-brand-700 bg-nex-navyLight/70 text-white shadow-[inset_4px_0_0_0_#CFA751]'
+        : 'border-transparent text-brand-100 hover:border-brand-700 hover:bg-brand-800/70 hover:text-white'
+    }`
+
+    if (!hasAccess) {
+      return (
+        <div
+          key={item.slug}
+          title="You don't currently have access"
+          className={`flex cursor-default items-center justify-between rounded-xl border border-transparent py-2.5 text-sm font-medium text-brand-100 opacity-40 ${
+            isChild ? 'pl-10 pr-3' : 'px-3'
+          }`}
+        >
+          <span className="flex items-center gap-3">
+            <Icon className="h-5 w-5 shrink-0" />
+            <span className="flex items-center gap-2">
+              {item.label}
+              <LockIcon className="h-3.5 w-3.5" />
+            </span>
+          </span>
+          {item.slug === 'my-queue' && myQueueCount > 0 ? (
+            <span className="inline-flex min-w-6 items-center justify-center rounded-full bg-gold-400 px-2 py-0.5 text-xs font-semibold text-white">
+              {myQueueCount}
+            </span>
+          ) : null}
+        </div>
+      )
+    }
+
+    return (
+      <Link key={item.slug} href={item.href} className={commonClass}>
+        <span className="flex items-center gap-3">
+          <Icon className="h-5 w-5 shrink-0" />
+          {item.label}
+        </span>
+        {item.slug === 'my-queue' && myQueueCount > 0 ? (
+          <span className="inline-flex min-w-6 items-center justify-center rounded-full bg-gold-400 px-2 py-0.5 text-xs font-semibold text-white">
+            {myQueueCount}
+          </span>
+        ) : null}
+      </Link>
+    )
+  }
 
   return (
     <aside className="fixed left-0 top-0 flex h-screen w-64 flex-col border-r border-brand-800 bg-nex-navy">
-      {/* Logo */}
-      <div className="px-4 pt-4 pb-3 border-b border-gold-400/10">
+      <div className="border-b border-gold-400/10 px-4 pb-3 pt-4">
         <div className="flex items-center gap-2.5">
           <MiniRadar size={36} />
           <div>
-            <div className="text-lg font-extrabold tracking-[0.15em] text-white leading-none">
+            <div className="text-lg font-extrabold leading-none tracking-[0.15em] text-white">
               <span className="text-gold-400">H</span>ELM
             </div>
-            <div className="text-[8px] text-white/35 tracking-[0.08em] uppercase mt-0.5 font-medium">
+            <div className="mt-0.5 text-[8px] font-medium uppercase tracking-[0.08em] text-white/35">
               Ecommerce Logistics & Mgmt
             </div>
           </div>
@@ -163,181 +278,40 @@ export function Sidebar({ profile, myQueueCount }: { profile: Profile; myQueueCo
 
       <nav className="flex-1 space-y-1 overflow-y-auto p-4">
         {navItems.map((item) => {
-          const href = `/${item.slug}`
+          if (!isNavSection(item)) {
+            return renderNavLink(item)
+          }
+
           const Icon = ICON_MAP[item.icon] ?? LayoutDashboardIcon
-          const isActive =
-            pathname === href || (href !== '/dashboard' && pathname.startsWith(`${href}/`))
-          const hasAccess = accessibleSlugs.has(item.slug)
-          const shouldRenderAnalytics = item.slug === 'aor-settings'
-          const shouldRenderSiteQuality = item.slug === 'aor-settings'
-          const navItemClass = `group flex items-center justify-between rounded-xl border px-3 py-2.5 text-sm font-medium transition-colors ${
-            isActive
+          const isOpen = expandedSections[item.id] ?? true
+          const hasActiveChild = item.children.some((child) => isLinkActive(child.href, pathname))
+          const sectionClass = `group flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-sm font-medium transition-colors ${
+            hasActiveChild
               ? 'border-brand-700 bg-nex-navyLight/70 text-white shadow-[inset_4px_0_0_0_#CFA751]'
               : 'border-transparent text-brand-100 hover:border-brand-700 hover:bg-brand-800/70 hover:text-white'
           }`
 
-          const itemNode = !hasAccess ? (
-            <div
-              title="You don't currently have access"
-              className="flex cursor-default items-center justify-between rounded-xl border border-transparent px-3 py-2.5 text-sm font-medium text-brand-100 opacity-40"
-            >
-              <span className="flex items-center gap-3">
-                <Icon className="h-5 w-5 shrink-0" />
-                <span className="flex items-center gap-2">
-                  {item.label}
-                  <LockIcon className="h-3.5 w-3.5" />
-                </span>
-              </span>
-              {item.slug === 'my-queue' && myQueueCount > 0 && (
-                <span className="inline-flex min-w-6 items-center justify-center rounded-full bg-gold-400 px-2 py-0.5 text-xs font-semibold text-white">
-                  {myQueueCount}
-                </span>
-              )}
-            </div>
-          ) : (
-            <Link href={href} className={navItemClass}>
-              <span className="flex items-center gap-3">
-                <Icon className="h-5 w-5 shrink-0" />
-                {item.label}
-              </span>
-              {item.slug === 'my-queue' && myQueueCount > 0 && (
-                <span className="inline-flex min-w-6 items-center justify-center rounded-full bg-gold-400 px-2 py-0.5 text-xs font-semibold text-white">
-                  {myQueueCount}
-                </span>
-              )}
-            </Link>
-          )
-
           return (
-            <Fragment key={item.slug}>
-              {itemNode}
-              {shouldRenderAnalytics && (
-                <div className="space-y-1">
-                  <button
-                    type="button"
-                    onClick={() => setIsAnalyticsExpanded((prev) => !prev)}
-                    className={analyticsHeaderClass}
-                  >
-                    <span className="flex items-center gap-3">
-                      <BarChart3 className="h-5 w-5 shrink-0" />
-                      Analytics
-                    </span>
-                    {isAnalyticsExpanded ? (
-                      <ChevronDown className="h-4 w-4 shrink-0" />
-                    ) : (
-                      <ChevronRight className="h-4 w-4 shrink-0" />
-                    )}
-                  </button>
+            <div key={item.id} className="space-y-1">
+              <button
+                type="button"
+                onClick={() => toggleSection(item.id, item.label)}
+                className={sectionClass}
+                aria-expanded={isOpen}
+              >
+                <span className="flex items-center gap-3">
+                  <Icon className="h-5 w-5 shrink-0" />
+                  {item.label}
+                </span>
+                {isOpen ? (
+                  <ChevronDown className="h-4 w-4 shrink-0 transition-transform duration-200" />
+                ) : (
+                  <ChevronRight className="h-4 w-4 shrink-0 transition-transform duration-200" />
+                )}
+              </button>
 
-                  {isAnalyticsExpanded && (
-                    <div className="space-y-1">
-                      {ANALYTICS_NAV_ITEMS.map((analyticsItem) => {
-                        const subItemActive =
-                          pathname === analyticsItem.href ||
-                          pathname.startsWith(`${analyticsItem.href}/`)
-                        const subItemAccessible = accessibleSlugs.has(analyticsItem.slug)
-                        const SubItemIcon = analyticsItem.Icon
-                        const subItemClass = `group flex items-center rounded-xl border px-3 py-2.5 pl-10 text-sm font-medium transition-colors ${
-                          subItemActive
-                            ? 'border-brand-700 bg-nex-navyLight/70 text-white shadow-[inset_4px_0_0_0_#CFA751]'
-                            : 'border-transparent text-brand-100 hover:border-brand-700 hover:bg-brand-800/70 hover:text-white'
-                        }`
-
-                        if (!subItemAccessible) {
-                          return (
-                            <div
-                              key={analyticsItem.slug}
-                              title="You don't currently have access"
-                              className="flex cursor-default items-center rounded-xl border border-transparent px-3 py-2.5 pl-10 text-sm font-medium text-brand-100 opacity-40"
-                            >
-                              <span className="flex items-center gap-3">
-                                <SubItemIcon className="h-5 w-5 shrink-0" />
-                                <span className="flex items-center gap-2">
-                                  {analyticsItem.label}
-                                  <LockIcon className="h-3.5 w-3.5" />
-                                </span>
-                              </span>
-                            </div>
-                          )
-                        }
-
-                        return (
-                          <Link key={analyticsItem.slug} href={analyticsItem.href} className={subItemClass}>
-                            <span className="flex items-center gap-3">
-                              <SubItemIcon className="h-5 w-5 shrink-0" />
-                              {analyticsItem.label}
-                            </span>
-                          </Link>
-                        )
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
-              {shouldRenderSiteQuality && (
-                <div className="space-y-1">
-                  <button
-                    type="button"
-                    onClick={() => setIsSiteQualityExpanded((prev) => !prev)}
-                    className={siteQualityHeaderClass}
-                  >
-                    <span className="flex items-center gap-3">
-                      <Shield className="h-5 w-5 shrink-0" />
-                      Site Quality
-                    </span>
-                    {isSiteQualityExpanded ? (
-                      <ChevronDown className="h-4 w-4 shrink-0" />
-                    ) : (
-                      <ChevronRight className="h-4 w-4 shrink-0" />
-                    )}
-                  </button>
-
-                  {isSiteQualityExpanded && (
-                    <div className="space-y-1">
-                      {SITE_QUALITY_NAV_ITEMS.map((siteItem) => {
-                        const subItemActive =
-                          pathname === siteItem.href ||
-                          pathname.startsWith(`${siteItem.href}/`)
-                        const subItemAccessible = accessibleSlugs.has(siteItem.slug)
-                        const SubItemIcon = siteItem.Icon
-                        const subItemClass = `group flex items-center rounded-xl border px-3 py-2.5 pl-10 text-sm font-medium transition-colors ${
-                          subItemActive
-                            ? 'border-brand-700 bg-nex-navyLight/70 text-white shadow-[inset_4px_0_0_0_#CFA751]'
-                            : 'border-transparent text-brand-100 hover:border-brand-700 hover:bg-brand-800/70 hover:text-white'
-                        }`
-
-                        if (!subItemAccessible) {
-                          return (
-                            <div
-                              key={siteItem.slug}
-                              title="You don't currently have access"
-                              className="flex cursor-default items-center rounded-xl border border-transparent px-3 py-2.5 pl-10 text-sm font-medium text-brand-100 opacity-40"
-                            >
-                              <span className="flex items-center gap-3">
-                                <SubItemIcon className="h-5 w-5 shrink-0" />
-                                <span className="flex items-center gap-2">
-                                  {siteItem.label}
-                                  <LockIcon className="h-3.5 w-3.5" />
-                                </span>
-                              </span>
-                            </div>
-                          )
-                        }
-
-                        return (
-                          <Link key={siteItem.slug} href={siteItem.href} className={subItemClass}>
-                            <span className="flex items-center gap-3">
-                              <SubItemIcon className="h-5 w-5 shrink-0" />
-                              {siteItem.label}
-                            </span>
-                          </Link>
-                        )
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
-            </Fragment>
+              {isOpen ? <div className="space-y-1">{item.children.map((child) => renderNavLink(child, true))}</div> : null}
+            </div>
           )
         })}
       </nav>
@@ -461,31 +435,6 @@ function UserIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6.75a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.5 20.25a7.5 7.5 0 0115 0" />
-    </svg>
-  )
-}
-
-function ShieldIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 3l7.5 3v6.75c0 4.08-2.69 7.77-6.75 9-4.06-1.23-6.75-4.92-6.75-9V6L12 3z" />
-      <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 12.75l1.5 1.5 3-3" />
-    </svg>
-  )
-}
-
-function SearchIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.3-4.3m1.8-5.2a7 7 0 11-14 0 7 7 0 0114 0z" />
-    </svg>
-  )
-}
-
-function PackageIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 7.5L12 3.75l8.25 3.75M3.75 7.5V16.5L12 20.25m-8.25-12.75L12 11.25m8.25-3.75V16.5L12 20.25m0-9V20.25" />
     </svg>
   )
 }

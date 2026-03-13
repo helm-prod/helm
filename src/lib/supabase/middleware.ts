@@ -1,5 +1,6 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { isWogEditorPathAllowed, normalizeUserRole } from '@/lib/roles'
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
@@ -37,6 +38,21 @@ export async function updateSession(request: NextRequest) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     return NextResponse.redirect(url)
+  }
+
+  if (user && !request.nextUrl.pathname.startsWith('/api')) {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .maybeSingle()
+
+    const role = normalizeUserRole(profile?.role)
+    if (role === 'wog_editor' && !isWogEditorPathAllowed(request.nextUrl.pathname)) {
+      const url = request.nextUrl.clone()
+      url.pathname = '/wog'
+      return NextResponse.redirect(url)
+    }
   }
 
   return supabaseResponse

@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { NAV_ITEMS, NON_ADMIN_ROLES } from '@/lib/nav-config'
+import { normalizeUserRole, WOG_EDITOR_ALLOWED_SLUGS } from '@/lib/roles'
 import type { UserRole } from '@/lib/types/database'
 
 type PageAccessRow = {
@@ -21,6 +22,7 @@ const ALWAYS_ENABLED_SLUGS = new Set<string>([
 
 function getRoleDefault(role: UserRole, pageSlug: string): boolean {
   if (ALWAYS_ENABLED_SLUGS.has(pageSlug)) return true
+  if (role === 'wog_editor') return WOG_EDITOR_ALLOWED_SLUGS.includes(pageSlug)
   if (role === 'senior_web_producer') return true
   return false
 }
@@ -40,11 +42,7 @@ export async function getUserRole(supabase: SupabaseClient): Promise<UserRole> {
     .eq('id', user.id)
     .maybeSingle()
 
-  if (data?.role === 'admin' || data?.role === 'senior_web_producer' || data?.role === 'producer') {
-    return data.role
-  }
-
-  return 'producer'
+  return normalizeUserRole(data?.role)
 }
 
 export async function getEffectiveAccess(
@@ -170,6 +168,14 @@ export async function ensurePageAccessRows(
         page_slug: slug,
         role: 'producer',
         is_enabled: ALWAYS_ENABLED_SLUGS.has(slug),
+      })
+    }
+
+    if (!existing.has(`${slug}:wog_editor`)) {
+      inserts.push({
+        page_slug: slug,
+        role: 'wog_editor',
+        is_enabled: WOG_EDITOR_ALLOWED_SLUGS.includes(slug),
       })
     }
   }

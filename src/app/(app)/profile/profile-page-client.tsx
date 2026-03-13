@@ -15,6 +15,7 @@ type Toast = {
 function roleBadgeClass(role: Profile['role']) {
   if (role === 'admin') return 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200'
   if (role === 'senior_web_producer') return 'border-violet-500/40 bg-violet-500/15 text-violet-200'
+  if (role === 'wog_editor') return 'border-cyan-500/40 bg-cyan-500/15 text-cyan-200'
   return 'border-blue-500/40 bg-blue-500/15 text-blue-200'
 }
 

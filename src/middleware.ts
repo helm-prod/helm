@@ -8,7 +8,7 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   // Skip auth for public API routes
-  if (PUBLIC_API_PREFIXES.some(prefix => pathname.startsWith(prefix))) {
+  if (PUBLIC_API_PREFIXES.some((prefix) => pathname.startsWith(prefix))) {
     return NextResponse.next()
   }
 

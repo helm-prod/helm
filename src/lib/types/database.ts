@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'senior_web_producer' | 'producer'
+export type UserRole = 'admin' | 'senior_web_producer' | 'producer' | 'wog_editor'
 
 export type RequestType =
   | 'new_panel'

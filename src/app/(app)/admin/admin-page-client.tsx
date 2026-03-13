@@ -54,6 +54,7 @@ function isUserLocked(bannedUntil: string | null | undefined) {
 function roleBadgeClass(role: UserRole) {
   if (role === 'admin') return 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200'
   if (role === 'senior_web_producer') return 'border-violet-500/20 bg-violet-500/15 text-violet-400'
+  if (role === 'wog_editor') return 'border-cyan-500/20 bg-cyan-500/15 text-cyan-300'
   return 'border-blue-500/20 bg-blue-500/15 text-blue-400'
 }
 
