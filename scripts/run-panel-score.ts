@@ -209,7 +209,10 @@ async function main() {
 
   console.log(`Starting panel score run ${runId}${adWeek ? ` for ad week ${adWeek}` : ''}`)
 
-  await supabase.from('site_quality_panel_runs').update({ status: 'running' }).eq('id', runId)
+  await supabase.from('site_quality_panel_runs').update({
+    status: 'running',
+    started_at: new Date().toISOString(),
+  }).eq('id', runId)
 
   const { browser, page } = await getAuthenticatedPage()
 
@@ -274,10 +277,10 @@ async function main() {
 
     await supabase.from('site_quality_panel_runs').update({
       status: 'complete',
-      total_panels: results.length,
+      panels_scored: results.length,
       avg_score: avgScore,
-      issues_flagged: issueCount,
-      passing_count: passingCount,
+      issues_found: issueCount,
+      panels_flagged: passingCount,
       completed_at: new Date().toISOString(),
     }).eq('id', runId)
 
