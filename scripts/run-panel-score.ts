@@ -33,11 +33,33 @@ async function getAuthenticatedPage() {
 
   const page = await context.newPage()
   const loginUrl = `${process.env.NEXCOM_SITE_URL}/account/sign-in`
-  await page.goto(loginUrl, { waitUntil: 'networkidle' })
-  await page.fill('input[type="email"], input[name="email"], #email', process.env.NEXCOM_BOT_EMAIL!)
-  await page.fill('input[type="password"], input[name="password"], #password', process.env.NEXCOM_BOT_PASSWORD!)
-  await page.click('button[type="submit"]')
-  await page.waitForNavigation({ waitUntil: 'networkidle', timeout: 15000 })
+  // Use domcontentloaded — ATG pages never fully reach networkidle
+  await page.goto(loginUrl, { waitUntil: 'domcontentloaded', timeout: 30000 })
+
+  // Wait for the email field to confirm the login form is actually rendered
+  await page.waitForSelector(
+    'input[type="email"], input[name="email"], #email, input[id*="email"], input[name*="email"]',
+    { state: 'visible', timeout: 30000 }
+  )
+
+  await page.fill(
+    'input[type="email"], input[name="email"], #email, input[id*="email"], input[name*="email"]',
+    process.env.NEXCOM_BOT_EMAIL!
+  )
+  await page.fill(
+    'input[type="password"], input[name="password"], #password, input[id*="password"]',
+    process.env.NEXCOM_BOT_PASSWORD!
+  )
+
+  // Wait for submit button to be visible before clicking
+  await page.waitForSelector('button[type="submit"], input[type="submit"]', {
+    state: 'visible',
+    timeout: 15000,
+  })
+  await page.click('button[type="submit"], input[type="submit"]')
+
+  // Wait for navigation after login — domcontentloaded is sufficient
+  await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 })
 
   const isLoggedIn = await page.evaluate(() => {
     return (
