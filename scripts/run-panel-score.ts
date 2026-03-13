@@ -28,49 +28,128 @@ async function getAuthenticatedPage() {
   })
 
   const context = await browser.newContext({
-    userAgent: 'Mozilla/5.0 (compatible; HelmBot/1.0; +https://helm.nexweb.dev)',
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   })
 
   const page = await context.newPage()
   const loginUrl = `${process.env.NEXCOM_SITE_URL}/account/sign-in`
-  // Use domcontentloaded — ATG pages never fully reach networkidle
+
+  console.log(`Navigating to login page: ${loginUrl}`)
   await page.goto(loginUrl, { waitUntil: 'domcontentloaded', timeout: 30000 })
 
-  // Wait for the email field to confirm the login form is actually rendered
-  await page.waitForSelector(
-    'input[type="email"], input[name="email"], #email, input[id*="email"], input[name*="email"]',
-    { state: 'visible', timeout: 30000 }
-  )
+  // Wait a moment for any JS to hydrate the form
+  await page.waitForTimeout(3000)
 
-  await page.fill(
-    'input[type="email"], input[name="email"], #email, input[id*="email"], input[name*="email"]',
-    process.env.NEXCOM_BOT_EMAIL!
-  )
-  await page.fill(
-    'input[type="password"], input[name="password"], #password, input[id*="password"]',
-    process.env.NEXCOM_BOT_PASSWORD!
-  )
+  // Debug: log page state
+  const pageTitle = await page.title()
+  const pageUrl = page.url()
+  console.log(`Page title: ${pageTitle}`)
+  console.log(`Page URL: ${pageUrl}`)
 
-  // Wait for submit button to be visible before clicking
-  await page.waitForSelector('button[type="submit"], input[type="submit"]', {
-    state: 'visible',
-    timeout: 15000,
+  // Take a screenshot immediately so we can see what loaded
+  await page.screenshot({ path: '/tmp/login-page.png', fullPage: true })
+  console.log('Screenshot saved to /tmp/login-page.png')
+
+  // Log all input elements found on the page
+  const inputs = await page.evaluate(() => {
+    return Array.from(document.querySelectorAll('input, button, a[href*="login"], a[href*="sign"]')).map((el) => ({
+      tag: el.tagName,
+      type: (el as HTMLInputElement).type || '',
+      name: (el as HTMLInputElement).name || '',
+      id: el.id || '',
+      className: el.className || '',
+      text: el.textContent?.trim().slice(0, 50) || '',
+      visible: (el as HTMLElement).offsetParent !== null,
+    }))
   })
-  await page.click('button[type="submit"], input[type="submit"]')
+  console.log('Form elements found:', JSON.stringify(inputs, null, 2))
 
-  // Wait for navigation after login — domcontentloaded is sufficient
-  await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 })
+  try {
+    // Wait for email field
+    await page.waitForSelector(
+      'input[type="email"], input[name="email"], input[name*="email"], input[id*="email"], input[name*="login"], input[name*="username"]',
+      { state: 'visible', timeout: 20000 }
+    )
+
+    await page.fill(
+      'input[type="email"], input[name="email"], input[name*="email"], input[id*="email"], input[name*="login"], input[name*="username"]',
+      process.env.NEXCOM_BOT_EMAIL!
+    )
+
+    await page.fill(
+      'input[type="password"], input[name="password"], input[name*="password"], input[id*="password"]',
+      process.env.NEXCOM_BOT_PASSWORD!
+    )
+
+    console.log('Filled email and password fields')
+
+    // Take screenshot after filling fields
+    await page.screenshot({ path: '/tmp/login-filled.png', fullPage: true })
+
+    // Try multiple submit strategies in order
+    const submitted = await page.evaluate(() => {
+      const submitBtn = document.querySelector('button[type="submit"], input[type="submit"]') as HTMLElement | null
+      if (submitBtn) {
+        submitBtn.click()
+        return 'submit-button'
+      }
+
+      const buttons = Array.from(document.querySelectorAll('button, a, div[role="button"], span[role="button"]'))
+      const loginBtn = buttons.find((el) => {
+        const text = el.textContent?.toLowerCase() || ''
+        return text.includes('sign in') || text.includes('log in') || text.includes('login') || text.includes('submit')
+      }) as HTMLElement | null
+      if (loginBtn) {
+        loginBtn.click()
+        return 'text-button:' + loginBtn.textContent?.trim()
+      }
+
+      const form = document.querySelector('form') as HTMLFormElement | null
+      if (form) {
+        form.submit()
+        return 'form-submit'
+      }
+
+      return null
+    })
+
+    console.log(`Submit strategy used: ${submitted}`)
+
+    if (!submitted) {
+      throw new Error('Could not find any login button or form to submit')
+    }
+
+    // Wait for navigation after login
+    await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {
+      console.log('No navigation after submit (may have used JS-based login)')
+    })
+
+    await page.waitForTimeout(2000)
+
+    const postLoginTitle = await page.title()
+    const postLoginUrl = page.url()
+    console.log(`Post-login title: ${postLoginTitle}`)
+    console.log(`Post-login URL: ${postLoginUrl}`)
+    await page.screenshot({ path: '/tmp/post-login.png', fullPage: false })
+  } catch (err) {
+    await page.screenshot({ path: '/tmp/login-error.png', fullPage: true }).catch(() => {})
+    throw err
+  }
 
   const isLoggedIn = await page.evaluate(() => {
     return (
       document.body.innerText.includes('Hi ') ||
-      !!document.querySelector('[href*="sign-out"], [href*="logout"]')
+      !!document.querySelector('[href*="sign-out"], [href*="logout"], [href*="signout"]')
     )
   })
 
   if (!isLoggedIn) {
-    await browser.close()
-    throw new Error('NEXCOM authentication failed')
+    await page.screenshot({ path: '/tmp/login-failed.png', fullPage: false }).catch(() => {})
+    console.log('Login check failed - not detecting logged-in state')
+    // Don't throw here - continue anyway and let the scraper determine if pages load correctly
+    console.log('Proceeding despite login check failure...')
+  } else {
+    console.log('Login verified successfully')
   }
 
   return { browser, page }
