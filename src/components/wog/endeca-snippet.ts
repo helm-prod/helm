@@ -260,6 +260,9 @@ p.coinmain {
         </div>
       </div>
 
+<div class="row mt-5">
+  <div class="col-12"><h2 class="wog">Upcoming Events</h2></div>
+</div>
       <div id="wog-upcoming-events"></div>
 
 <div class="row mt-5">
@@ -377,12 +380,13 @@ p.coinmain {
     if (!container || !events.length) return;
     var html = '<div class="row mt-2">';
     events.forEach(function(ev) {
-      html += '<div class="col-md-3 col-6 gallery-item">';
+      html += '<div class="col-md-4 col-6 gallery-item">';
       html += '<div class="image-container"><img alt="' + esc(ev.event_name) + '" class="img-fluid" src="' + esc(ev.event_image_url) + '" /></div>';
       html += '<p class="eventname">' + esc(ev.event_name) + '</p>';
+      if (ev.location) html += '<p class="location">' + esc(ev.location) + '</p>';
       html += '<p class="eventdate">' + formatDate(ev.start_date, ev.end_date) + '</p>';
-      if (ev.description) html += '<p class="desc hidden-mobile">' + esc(ev.description) + '</p>';
-      if (ev.special_notes) html += '<p class="desc hidden-mobile">' + esc(ev.special_notes) + '</p>';
+      if (ev.description) html += '<p class="desc">' + esc(ev.description) + '</p>';
+      if (ev.special_notes) html += '<p class="reg">' + esc(ev.special_notes) + '</p>';
       var hasCta = ev.cta1_title || ev.cta2_title;
       if (hasCta) {
         html += '<div class="cta-buttons">';
