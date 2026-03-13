@@ -99,6 +99,20 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid status' }, { status: 400 })
   }
 
+  const { data: existingEvent, error: existingEventError } = await supabase
+    .from('wog_events')
+    .select('id, status, sort_order')
+    .eq('id', body.id)
+    .maybeSingle()
+
+  if (existingEventError) {
+    return NextResponse.json({ error: existingEventError.message }, { status: 500 })
+  }
+
+  if (!existingEvent) {
+    return NextResponse.json({ error: 'Event not found' }, { status: 404 })
+  }
+
   const updates: Record<string, unknown> = {}
 
   for (const [key, value] of Object.entries(body)) {
@@ -118,6 +132,34 @@ export async function PATCH(request: NextRequest) {
       { error: 'event_name, description, and event_image_url cannot be empty' },
       { status: 400 },
     )
+  }
+
+  if (body.status && body.status !== existingEvent.status) {
+    const { data: destinationEvents, error: destinationError } = await supabase
+      .from('wog_events')
+      .select('id, status')
+      .eq('status', body.status)
+      .neq('id', body.id)
+      .order('sort_order', { ascending: true })
+
+    if (destinationError) {
+      return NextResponse.json({ error: destinationError.message }, { status: 500 })
+    }
+
+    const shiftUpdates = (destinationEvents ?? []).map((event, index) => ({
+      id: event.id,
+      status: body.status as WogEventStatus,
+      sort_order: index + 1,
+    }))
+
+    if (shiftUpdates.length > 0) {
+      const { error: shiftError } = await supabase.from('wog_events').upsert(shiftUpdates, { onConflict: 'id' })
+      if (shiftError) {
+        return NextResponse.json({ error: shiftError.message }, { status: 500 })
+      }
+    }
+
+    updates.sort_order = 0
   }
 
   const { data, error } = await supabase

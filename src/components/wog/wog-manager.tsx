@@ -28,6 +28,7 @@ type Notice = {
 } | null
 
 type NoticeType = NonNullable<Notice>['type']
+const VISIBLE_CAP = 10
 
 const LANE_META: Record<WogEventStatus, { label: string; hint: string; borderClass: string }> = {
   upcoming: {
@@ -78,6 +79,23 @@ function formatDateRange(events: WogEvent[]) {
   return `${events.length} event${events.length === 1 ? '' : 's'}`
 }
 
+function filterEvents(events: WogEvent[], query: string) {
+  if (!query.trim()) return events
+  const normalizedQuery = query.toLowerCase()
+
+  return events.filter((event) => {
+    const eventName = event.event_name.toLowerCase()
+    const description = event.description.toLowerCase()
+    const location = event.location?.toLowerCase() ?? ''
+
+    return (
+      eventName.includes(normalizedQuery) ||
+      description.includes(normalizedQuery) ||
+      location.includes(normalizedQuery)
+    )
+  })
+}
+
 export default function WogManager({ initialEvents }: Props) {
   const initial = useMemo(() => splitEvents(initialEvents), [initialEvents])
   const [upcoming, setUpcoming] = useState<WogEvent[]>(initial.upcoming)
@@ -91,6 +109,12 @@ export default function WogManager({ initialEvents }: Props) {
   const [isLoading, setIsLoading] = useState(false)
   const [notice, setNotice] = useState<Notice>(null)
   const [setupCopied, setSetupCopied] = useState(false)
+  const [search, setSearch] = useState('')
+  const [expandedLanes, setExpandedLanes] = useState<Record<WogEventStatus, boolean>>({
+    upcoming: false,
+    past: false,
+    archived: false,
+  })
 
   function setLanes(next: LaneState) {
     setUpcoming(next.upcoming)
@@ -117,10 +141,10 @@ export default function WogManager({ initialEvents }: Props) {
 
   async function fetchEvents() {
     const response = await fetch('/api/wog', { cache: 'no-store' })
-    const payload = (await response.json().catch(() => null)) as { events?: WogEvent[]; error?: string } | null
+    const payload = (await response.json().catch(() => null)) as { events?: WogEvent[] } | null
 
     if (!response.ok || !payload?.events) {
-      throw new Error(payload?.error || 'Failed to fetch WOG events.')
+      throw new Error('Failed to load events. Please refresh and try again.')
     }
 
     setLanes(splitEvents(payload.events))
@@ -134,8 +158,7 @@ export default function WogManager({ initialEvents }: Props) {
     })
 
     if (!response.ok) {
-      const payload = (await response.json().catch(() => null)) as { error?: string } | null
-      throw new Error(payload?.error || 'Failed to reorder events.')
+      throw new Error('Failed to reorder events. Please try again.')
     }
   }
 
@@ -179,9 +202,10 @@ export default function WogManager({ initialEvents }: Props) {
         ),
       })
 
-      const payload = (await response.json().catch(() => null)) as { error?: string } | null
       if (!response.ok) {
-        throw new Error(payload?.error || 'Failed to save event.')
+        throw new Error(
+          isEditing ? 'Failed to update event. Please try again.' : 'Failed to create event. Please try again.',
+        )
       }
 
       await fetchEvents()
@@ -189,7 +213,14 @@ export default function WogManager({ initialEvents }: Props) {
       setShowAddModal(false)
       flashNotice('success', isEditing ? 'Event updated.' : 'Event created.')
     } catch (error) {
-      flashNotice('error', error instanceof Error ? error.message : 'Failed to save event.')
+      flashNotice(
+        'error',
+        error instanceof Error
+          ? error.message
+          : editingEvent
+            ? 'Failed to update event. Please try again.'
+            : 'Failed to create event. Please try again.',
+      )
     } finally {
       setIsLoading(false)
     }
@@ -204,15 +235,14 @@ export default function WogManager({ initialEvents }: Props) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id }),
       })
-      const payload = (await response.json().catch(() => null)) as { error?: string } | null
       if (!response.ok) {
-        throw new Error(payload?.error || 'Failed to delete event.')
+        throw new Error('Failed to delete event. Please try again.')
       }
 
       await fetchEvents()
       flashNotice('success', 'Event deleted.')
     } catch (error) {
-      flashNotice('error', error instanceof Error ? error.message : 'Failed to delete event.')
+      flashNotice('error', error instanceof Error ? error.message : 'Failed to delete event. Please try again.')
     } finally {
       setIsLoading(false)
     }
@@ -237,7 +267,7 @@ export default function WogManager({ initialEvents }: Props) {
         sourceStatus,
         sourceLane.filter((event) => event.id !== id),
       ),
-      [newStatus]: normalizeLane(newStatus, [...destinationLane, { ...movingEvent, status: newStatus }]),
+      [newStatus]: normalizeLane(newStatus, [{ ...movingEvent, status: newStatus }, ...destinationLane]),
     }
 
     setLanes(next)
@@ -247,18 +277,17 @@ export default function WogManager({ initialEvents }: Props) {
       const patchResponse = await fetch('/api/wog', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, status: newStatus, sort_order: next[newStatus].length - 1 }),
+        body: JSON.stringify({ id, status: newStatus }),
       })
-      const patchPayload = (await patchResponse.json().catch(() => null)) as { error?: string } | null
       if (!patchResponse.ok) {
-        throw new Error(patchPayload?.error || 'Failed to move event.')
+        throw new Error('Failed to update event. Please try again.')
       }
 
       await persistReorder(next)
       flashNotice('success', 'Event moved.')
     } catch (error) {
       await fetchEvents().catch(() => undefined)
-      flashNotice('error', error instanceof Error ? error.message : 'Failed to move event.')
+      flashNotice('error', error instanceof Error ? error.message : 'Failed to update event. Please try again.')
     } finally {
       setIsLoading(false)
     }
@@ -277,6 +306,7 @@ export default function WogManager({ initialEvents }: Props) {
       targetIndex === null
         ? current[targetLane].filter((event) => event.id !== dragging.id).length
         : targetIndex
+    const destinationIndex = dragging.fromLane === targetLane ? insertionIndex : 0
 
     const destinationBase =
       dragging.fromLane === targetLane
@@ -284,7 +314,7 @@ export default function WogManager({ initialEvents }: Props) {
         : current[targetLane].filter((event) => event.id !== dragging.id)
 
     const destination = [...destinationBase]
-    destination.splice(insertionIndex, 0, { ...movingEvent, status: targetLane })
+    destination.splice(destinationIndex, 0, { ...movingEvent, status: targetLane })
 
     const next: LaneState =
       dragging.fromLane === targetLane
@@ -311,11 +341,10 @@ export default function WogManager({ initialEvents }: Props) {
         const patchResponse = await fetch('/api/wog', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: dragging.id, status: targetLane, sort_order: insertionIndex }),
+          body: JSON.stringify({ id: dragging.id, status: targetLane }),
         })
-        const patchPayload = (await patchResponse.json().catch(() => null)) as { error?: string } | null
         if (!patchResponse.ok) {
-          throw new Error(patchPayload?.error || 'Failed to move event.')
+          throw new Error('Failed to update event. Please try again.')
         }
       }
 
@@ -323,16 +352,23 @@ export default function WogManager({ initialEvents }: Props) {
       flashNotice('success', movedAcrossLanes ? 'Event moved.' : 'Lane reordered.')
     } catch (error) {
       await fetchEvents().catch(() => undefined)
-      flashNotice('error', error instanceof Error ? error.message : 'Failed to reorder events.')
+      flashNotice(
+        'error',
+        error instanceof Error
+          ? error.message
+          : movedAcrossLanes
+            ? 'Failed to update event. Please try again.'
+            : 'Failed to reorder events. Please try again.',
+      )
     } finally {
       setIsLoading(false)
     }
   }
 
   const lanes: Array<{ status: WogEventStatus; events: WogEvent[] }> = [
-    { status: 'upcoming', events: upcoming },
-    { status: 'past', events: past },
-    { status: 'archived', events: archived },
+    { status: 'upcoming', events: filterEvents(upcoming, search) },
+    { status: 'past', events: filterEvents(past, search) },
+    { status: 'archived', events: filterEvents(archived, search) },
   ]
 
   return (
@@ -368,10 +404,32 @@ export default function WogManager({ initialEvents }: Props) {
         </button>
       </div>
 
-      <div className="mt-6 grid gap-5 xl:grid-cols-3">
+      <div className="mb-4 mt-6 flex flex-wrap items-center gap-3">
+        <input
+          type="text"
+          placeholder="Search events..."
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          className="w-full max-w-md rounded border border-[rgba(0,110,180,0.35)] bg-[rgba(0,65,115,0.4)] px-4 py-2 text-sm text-white placeholder-slate-400 focus:border-blue-400 focus:outline-none"
+        />
+        {search ? (
+          <button
+            type="button"
+            onClick={() => setSearch('')}
+            className="text-sm text-slate-400 transition-colors hover:text-white"
+          >
+            Clear
+          </button>
+        ) : null}
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-3">
         {lanes.map(({ status, events }) => {
           const meta = LANE_META[status]
           const isLaneActive = dragOverLane === status
+          const isSearchActive = Boolean(search.trim())
+          const hiddenCount = Math.max(events.length - VISIBLE_CAP, 0)
+          const visibleEvents = isSearchActive || expandedLanes[status] ? events : events.slice(0, VISIBLE_CAP)
 
           return (
             <section
@@ -405,12 +463,12 @@ export default function WogManager({ initialEvents }: Props) {
                     {status === 'upcoming'
                       ? 'No upcoming events. Add one to get started.'
                       : status === 'past'
-                        ? 'Drag completed events here to include them in generated code.'
+                        ? 'Move completed events here to keep them visible in the Previous Events section.'
                         : 'Archived items stay out of the generated HTML.'}
                   </div>
                 ) : null}
 
-                {events.map((event, index) => (
+                {visibleEvents.map((event, index) => (
                   <EventCard
                     key={event.id}
                     event={event}
@@ -440,6 +498,36 @@ export default function WogManager({ initialEvents }: Props) {
                     }}
                   />
                 ))}
+
+                {!isSearchActive && hiddenCount > 0 && !expandedLanes[status] ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setExpandedLanes((current) => ({
+                        ...current,
+                        [status]: true,
+                      }))
+                    }
+                    className="mt-2 w-full rounded border border-[rgba(0,110,180,0.25)] py-2 text-sm text-blue-300 transition-colors hover:border-[rgba(0,110,180,0.5)] hover:text-blue-200"
+                  >
+                    Show {hiddenCount} more
+                  </button>
+                ) : null}
+
+                {!isSearchActive && hiddenCount > 0 && expandedLanes[status] ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setExpandedLanes((current) => ({
+                        ...current,
+                        [status]: false,
+                      }))
+                    }
+                    className="mt-2 w-full rounded border border-[rgba(0,110,180,0.15)] py-2 text-sm text-slate-400 transition-colors hover:text-slate-300"
+                  >
+                    Show less
+                  </button>
+                ) : null}
               </div>
             </section>
           )

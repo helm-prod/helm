@@ -260,9 +260,6 @@ p.coinmain {
         </div>
       </div>
 
-<div class="row mt-5">
-  <div class="col-12"><h2 class="wog">Upcoming Events</h2></div>
-</div>
       <div id="wog-upcoming-events"></div>
 
 <div class="row mt-5">
@@ -377,8 +374,13 @@ p.coinmain {
 
   function renderUpcoming(events) {
     var container = document.getElementById('wog-upcoming-events');
-    if (!container || !events.length) return;
-    var html = '<div class="row mt-2">';
+    if (!container) return;
+    if (!events.length) {
+      container.innerHTML = '';
+      return;
+    }
+    var html = '<div class="row mt-5"><div class="col-12"><h2 class="wog">Upcoming Events</h2></div></div>';
+    html += '<div class="row mt-2">';
     events.forEach(function(ev) {
       html += '<div class="col-md-4 col-6 gallery-item">';
       html += '<div class="image-container"><img alt="' + esc(ev.event_name) + '" class="img-fluid" src="' + esc(ev.event_image_url) + '" /></div>';
