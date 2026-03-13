@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Loader2, X } from 'lucide-react'
+import ImageUploadField from '@/components/wog/image-upload-field'
 import type { WogEvent, WogEventStatus } from '@/types/wog'
 
 export type WogEventDraft = {
@@ -46,10 +47,14 @@ function makeDraft(event?: WogEvent): WogEventDraft {
 export default function EventFormModal({ event, isSaving = false, onSave, onClose }: Props) {
   const [draft, setDraft] = useState<WogEventDraft>(() => makeDraft(event))
   const [error, setError] = useState<string | null>(null)
+  const [imageUploading, setImageUploading] = useState(false)
+  const [imageError, setImageError] = useState<string | null>(null)
 
   useEffect(() => {
     setDraft(makeDraft(event))
     setError(null)
+    setImageUploading(false)
+    setImageError(null)
   }, [event])
 
   function updateField<K extends keyof WogEventDraft>(key: K, value: WogEventDraft[K]) {
@@ -59,8 +64,18 @@ export default function EventFormModal({ event, isSaving = false, onSave, onClos
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
+    if (imageUploading) {
+      setError('Please wait for the image upload to finish.')
+      return
+    }
+
     if (!draft.event_name.trim() || !draft.start_date || !draft.description.trim() || !draft.event_image_url.trim()) {
-      setError('Event name, start date, description, and event image URL are required.')
+      setError('Event name, start date, description, and event image are required.')
+      return
+    }
+
+    if (imageError) {
+      setError(imageError)
       return
     }
 
@@ -138,9 +153,14 @@ export default function EventFormModal({ event, isSaving = false, onSave, onClos
             </div>
 
             <div className="md:col-span-2">
-              <label className="mb-1.5 block text-sm font-medium text-brand-100">Event Image URL</label>
-              <input className={fieldClassName} value={draft.event_image_url} onChange={(event) => updateField('event_image_url', event.target.value)} required />
-              <p className="mt-1 text-xs text-brand-400">Paste FTP/CDN URL directly.</p>
+              <label className="mb-1.5 block text-sm font-medium text-brand-100">Event Image</label>
+              <ImageUploadField
+                value={draft.event_image_url || null}
+                onChange={(url) => updateField('event_image_url', url ?? '')}
+                disabled={isSaving}
+                onUploadingChange={setImageUploading}
+                onErrorChange={setImageError}
+              />
             </div>
 
             <div>
@@ -176,10 +196,10 @@ export default function EventFormModal({ event, isSaving = false, onSave, onClos
             </button>
             <button
               type="submit"
-              disabled={isSaving}
+              disabled={isSaving || imageUploading}
               className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-70"
             >
-              {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {isSaving || imageUploading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               {event ? 'Save Changes' : 'Create Event'}
             </button>
           </div>
