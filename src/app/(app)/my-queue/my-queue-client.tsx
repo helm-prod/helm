@@ -9,7 +9,6 @@ import type {
   Panel,
   Priority,
   Profile,
-  QueuePreferences,
   QueueSectionKey,
   RequestType,
   WorkRequest,
@@ -32,23 +31,12 @@ type QueuePanel = Omit<Panel, 'ad_week' | 'event' | 'assignee'> & {
 interface MyQueueClientProps {
   profile: Profile
   panels: QueuePanel[]
-  queuePrefs: QueuePreferences | null
+  activeSections: Partial<Record<QueueSectionKey, boolean>>
   linkIssues: LinkIssue[]
   allLinkIssues: LinkIssue[] | null
   corrections: WorkRequest[]
   submittedRequests: WorkRequest[]
   assignedRequests: WorkRequest[]
-}
-
-const DEFAULT_SECTIONS: Record<QueueSectionKey, boolean> = {
-  panels: true,
-  link_issues: true,
-  corrections: true,
-  submitted_requests: false,
-  assigned_requests: false,
-  team_overview: false,
-  all_link_issues: false,
-  junior_aor_issues: false,
 }
 
 const TEAM_NAMES = ['Megan', 'Maddie', 'Daryl'] as const
@@ -98,9 +86,9 @@ function normalizeSections(
   const allowed = new Set(allowedSectionsForRole(role))
   const next: Partial<Record<QueueSectionKey, boolean>> = {}
 
-  for (const key of Object.keys(DEFAULT_SECTIONS) as QueueSectionKey[]) {
+  for (const key of Object.keys(SECTION_COPY) as QueueSectionKey[]) {
     if (!allowed.has(key)) continue
-    next[key] = savedSections?.[key] ?? DEFAULT_SECTIONS[key]
+    next[key] = savedSections?.[key] ?? false
   }
 
   return next
@@ -238,7 +226,7 @@ function getEmptyMessage(sectionKey: QueueSectionKey) {
 export function MyQueueClient({
   profile,
   panels,
-  queuePrefs,
+  activeSections,
   linkIssues,
   allLinkIssues,
   corrections,
@@ -254,7 +242,7 @@ export function MyQueueClient({
   const [savingPrefs, setSavingPrefs] = useState(false)
   const [prefsError, setPrefsError] = useState<string | null>(null)
   const [sections, setSections] = useState<Partial<Record<QueueSectionKey, boolean>>>(
-    () => normalizeSections(profile.role, queuePrefs?.sections),
+    () => normalizeSections(profile.role, activeSections),
   )
   const [panelState, setPanelState] = useState(panels)
   const [linkIssueState, setLinkIssueState] = useState(linkIssues)
@@ -266,8 +254,8 @@ export function MyQueueClient({
   const [pendingActionId, setPendingActionId] = useState<string | null>(null)
 
   useEffect(() => {
-    setSections(normalizeSections(profile.role, queuePrefs?.sections))
-  }, [profile.role, queuePrefs])
+    setSections(normalizeSections(profile.role, activeSections))
+  }, [activeSections, profile.role])
 
   useEffect(() => {
     setPanelState(panels)
@@ -322,7 +310,23 @@ export function MyQueueClient({
   )
 
   const enabledSections = useMemo(
-    () => allowedSectionsForRole(profile.role).filter((key) => sections[key]),
+    () => {
+      const allowed = allowedSectionsForRole(profile.role)
+      const ordered =
+        profile.role === 'admin'
+          ? ([
+              'all_link_issues',
+              'panels',
+              'link_issues',
+              'corrections',
+              'submitted_requests',
+              'assigned_requests',
+              'junior_aor_issues',
+            ] as QueueSectionKey[])
+          : allowed
+
+      return ordered.filter((key) => allowed.includes(key) && key !== 'team_overview' && sections[key])
+    },
     [profile.role, sections],
   )
 
@@ -586,8 +590,6 @@ export function MyQueueClient({
 
       <div className="space-y-4">
         {enabledSections.map((sectionKey) => {
-          if (sectionKey === 'team_overview') return null
-
           const sectionOpen = openSections[sectionKey] ?? false
           const badge = countBadge(sectionCountMap[sectionKey])
 
@@ -785,6 +787,12 @@ export function MyQueueClient({
 
           if (sectionKey === 'all_link_issues') {
             const items = allLinkIssueState ?? []
+            const grouped = items.reduce<Record<string, LinkIssue[]>>((groups, issue) => {
+              const key = issue.aor_owner || 'Unassigned'
+              if (!groups[key]) groups[key] = []
+              groups[key].push(issue)
+              return groups
+            }, {})
 
             return (
               <QueueSection
@@ -800,21 +808,29 @@ export function MyQueueClient({
                   <EmptyState message={getEmptyMessage(sectionKey)} />
                 ) : (
                   <div>
-                    {items.map((issue) => {
-                      const meta = getLinkIssueMeta(issue)
-                      return (
-                        <QueueRow
-                          key={issue.id}
-                          done={false}
-                          loading={pendingActionId === issue.id}
-                          onResolve={() => void resolveLinkIssue(issue.id)}
-                          thumbnail={<Thumbnail imageUrl={issue.panel_image} />}
-                          label={`${issue.page_label || 'Unknown page'} - Slot ${issue.slot ?? '—'}`}
-                          subtext={`${issue.aor_owner || 'Unassigned'} · ${meta.description}`}
-                          badge={<Badge label={meta.label} className={meta.className} />}
-                        />
-                      )
-                    })}
+                    {Object.entries(grouped).map(([owner, ownerItems]) => (
+                      <div key={owner}>
+                        <div className="border-b border-[rgba(0,110,180,0.07)] px-4 py-2 text-[12px] text-[#475569]">
+                          {owner}
+                        </div>
+                        {ownerItems.map((issue) => {
+                          const meta = getLinkIssueMeta(issue)
+                          const week = issue.ad_week ? `Wk ${issue.ad_week}` : 'No week'
+                          return (
+                            <QueueRow
+                              key={issue.id}
+                              done={false}
+                              loading={pendingActionId === issue.id}
+                              onResolve={() => void resolveLinkIssue(issue.id)}
+                              thumbnail={<Thumbnail imageUrl={issue.panel_image} />}
+                              label={`${issue.page_label || 'Unknown page'} - Slot ${issue.slot ?? '—'}`}
+                              subtext={`${week} · ${meta.description}`}
+                              badge={<Badge label={meta.label} className={meta.className} />}
+                            />
+                          )
+                        })}
+                      </div>
+                    ))}
                   </div>
                 )}
               </QueueSection>

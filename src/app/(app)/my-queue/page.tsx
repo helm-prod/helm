@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import type { LinkIssue, Profile, QueuePreferences, WorkRequest } from '@/lib/types/database'
+import type { LinkIssue, Profile, QueuePreferences, QueueSectionKey, WorkRequest } from '@/lib/types/database'
 import { MyQueueClient } from './my-queue-client'
 import { PageGuard } from '@/components/page-guard'
 
@@ -94,12 +94,32 @@ export default async function MyQueuePage() {
     allLinkIssues = (data ?? []) as LinkIssue[]
   }
 
+  const adminDefaults: Partial<Record<QueueSectionKey, boolean>> = {
+    team_overview: true,
+    all_link_issues: true,
+    panels: false,
+    link_issues: false,
+    corrections: false,
+    submitted_requests: false,
+    assigned_requests: false,
+  }
+
+  const producerDefaults: Partial<Record<QueueSectionKey, boolean>> = {
+    panels: true,
+    link_issues: true,
+    corrections: true,
+  }
+
+  const defaultSections = profile.role === 'admin' ? adminDefaults : producerDefaults
+  const activeSections: Partial<Record<QueueSectionKey, boolean>> =
+    ((queuePrefsRes.data as QueuePreferences | null)?.sections ?? defaultSections)
+
   return (
     <PageGuard pageSlug="my-queue">
       <MyQueueClient
         profile={profile as Profile}
         panels={panels ?? []}
-        queuePrefs={(queuePrefsRes.data ?? null) as QueuePreferences | null}
+        activeSections={activeSections}
         linkIssues={(linkIssuesRes.data ?? []) as LinkIssue[]}
         allLinkIssues={allLinkIssues}
         corrections={(correctionsRes.data ?? []) as WorkRequest[]}
