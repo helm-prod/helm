@@ -153,9 +153,15 @@ export async function PATCH(request: NextRequest) {
     }))
 
     if (shiftUpdates.length > 0) {
-      const { error: shiftError } = await supabase.from('wog_events').upsert(shiftUpdates, { onConflict: 'id' })
-      if (shiftError) {
-        return NextResponse.json({ error: shiftError.message }, { status: 500 })
+      for (const shiftUpdate of shiftUpdates) {
+        const { error: shiftError } = await supabase
+          .from('wog_events')
+          .update({ sort_order: shiftUpdate.sort_order })
+          .eq('id', shiftUpdate.id)
+
+        if (shiftError) {
+          return NextResponse.json({ error: shiftError.message }, { status: 500 })
+        }
       }
     }
 
