@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { L1_PAGES } from '@/config/l1-pages'
+import { getAuthenticatedPage } from '@/lib/site-quality/nexcom-auth'
+import { scrapePanels } from '@/lib/site-quality/panel-scraper'
 import { createClient as createAuthClient } from '@/lib/supabase/server'
 import { createServiceRoleClient } from '@/lib/supabase/service'
-import { checkLink, extractPageLinks } from '@/lib/site-quality/link-checker'
+import { checkLink } from '@/lib/site-quality/link-checker'
 
 export const runtime = 'nodejs'
 
@@ -148,60 +150,64 @@ async function handleScanPage(body: ScanPageBody) {
   }> = []
 
   try {
-    const panels = await extractPageLinks(pageUrl)
+    const { browser, page: playwrightPage } = await getAuthenticatedPage()
 
-    for (const panel of panels) {
-      linksChecked += 1
+    try {
+      const scrapeResult = await scrapePanels(playwrightPage, pageUrl, body.pageLabel)
 
-      if (!panel.isLinked) {
+      for (const panel of scrapeResult.panels) {
+        linksChecked += 1
+
+        if (!panel.outboundHref) {
+          rows.push({
+            run_id: runId,
+            page_url: pageUrl,
+            link_url: null,
+            source_type: 'in-page',
+            source_label: body.pageLabel,
+            panel_image: panel.imageUrl,
+            slot: panel.slot,
+            ad_week: panel.adWeek,
+            ad_year: panel.adYear,
+            http_status: null,
+            error_message: 'Panel has no link (unlinked panel)',
+            redirect_target: null,
+            aor_owner: body.aorOwner,
+            is_broken: true,
+          })
+          brokenFound += 1
+          continue
+        }
+
+        const check = await checkLink(panel.outboundHref)
+        const status = check.httpStatus
+        const isBroken = status === null || status === 404 || status >= 400
+        const isRedirect = status !== null && status >= 300 && status < 400
+
+        if (status === 200) continue
+
+        if (isBroken) brokenFound += 1
+        if (isRedirect) redirectFound += 1
+
         rows.push({
           run_id: runId,
           page_url: pageUrl,
-          link_url: null,
+          link_url: panel.outboundHref,
           source_type: 'in-page',
           source_label: body.pageLabel,
-          panel_image: panel.panelImage,
+          panel_image: panel.imageUrl,
           slot: panel.slot,
           ad_week: panel.adWeek,
           ad_year: panel.adYear,
-          http_status: null,
-          error_message: 'Panel has no link (unlinked panel)',
-          redirect_target: null,
+          http_status: status,
+          error_message: check.errorMessage,
+          redirect_target: check.redirectTarget,
           aor_owner: body.aorOwner,
-          is_broken: true,
+          is_broken: isBroken,
         })
-        brokenFound += 1
-        continue
       }
-
-      const check = await checkLink(panel.url)
-      const status = check.httpStatus
-      const isBroken = status === null || status === 404 || status >= 400
-      const isRedirect = status !== null && status >= 300 && status < 400
-
-      if (status === 200) {
-        continue
-      }
-
-      if (isBroken) brokenFound += 1
-      if (isRedirect) redirectFound += 1
-
-      rows.push({
-        run_id: runId,
-        page_url: pageUrl,
-        link_url: panel.url,
-        source_type: 'in-page',
-        source_label: body.pageLabel,
-        panel_image: panel.panelImage,
-        slot: panel.slot,
-        ad_week: panel.adWeek,
-        ad_year: panel.adYear,
-        http_status: status,
-        error_message: check.errorMessage,
-        redirect_target: check.redirectTarget,
-        aor_owner: body.aorOwner,
-        is_broken: isBroken,
-      })
+    } finally {
+      await browser.close()
     }
   } catch {
     linksChecked = 0

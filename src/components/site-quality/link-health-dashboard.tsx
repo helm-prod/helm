@@ -467,6 +467,20 @@ export function LinkHealthDashboard({
         </section>
       )}
 
+      {!run && !isScanning ? (
+        <div className="rounded-[24px] border border-[rgba(0,110,180,0.25)] bg-[rgba(0,65,115,0.45)] px-6 py-16 text-center">
+          <p className="text-lg font-medium text-white">No scans completed yet</p>
+          <p className="mt-2 text-sm text-blue-100/60">Run your first link health scan to see results here.</p>
+          {userRole === 'admin' && (
+            <button
+              onClick={startScan}
+              className="mt-6 inline-flex items-center gap-2 rounded-full bg-blue-300 px-5 py-2.5 text-sm font-medium text-[#001f3a]"
+            >
+              Run scan now
+            </button>
+          )}
+        </div>
+      ) : (
       <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_280px]">
         <section className={`${CARD} p-5`}>
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -626,6 +640,7 @@ export function LinkHealthDashboard({
           <p className="px-1 text-sm text-blue-100/70">{message ?? ' '}</p>
         </div>
       </div>
+      )}
 
       {selectedResult && (
         <div className="fixed inset-0 z-50 flex justify-end" onClick={() => setSelectedResult(null)}>

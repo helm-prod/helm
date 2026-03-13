@@ -206,7 +206,14 @@ export function PanelIntelligenceDashboard({
                 </button>
               )
             })}
-            {filteredResults.length === 0 && <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-8 text-center text-sm text-blue-100/60">No panel scores yet.</div>}
+            {filteredResults.length === 0 && (
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-6 py-12 text-center">
+                <p className="text-base font-medium text-white">No panel scores yet</p>
+                <p className="mt-2 text-sm text-blue-100/60">
+                  {running ? 'Scoring in progress — results will appear here shortly.' : 'Use the Re-score now button to run your first scoring pass.'}
+                </p>
+              </div>
+            )}
           </div>
         </section>
 
