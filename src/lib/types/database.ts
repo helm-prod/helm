@@ -2,6 +2,7 @@ export type UserRole = 'admin' | 'senior_web_producer' | 'producer'
 
 export type RequestType =
   | 'new_panel'
+  | 'correction'
   | 'panel_correction'
   | 'category_change'
   | 'spotlight_record'
@@ -54,6 +55,24 @@ export interface UserPreferences {
   updated_at: string
 }
 
+export type QueueSectionKey =
+  | 'panels'
+  | 'link_issues'
+  | 'corrections'
+  | 'submitted_requests'
+  | 'assigned_requests'
+  | 'team_overview'
+  | 'all_link_issues'
+  | 'junior_aor_issues'
+
+export interface QueuePreferences {
+  id: string
+  user_id: string
+  sections: Partial<Record<QueueSectionKey, boolean>>
+  created_at: string
+  updated_at: string
+}
+
 export interface StatusHistoryEntry {
   from: RequestStatus | null
   to: RequestStatus
@@ -81,6 +100,23 @@ export interface WorkRequest {
   assignee?: Profile
 }
 
+export interface LinkIssue {
+  id: string
+  page_label: string | null
+  page_url: string | null
+  panel_image: string | null
+  slot: string | null
+  ad_week: number | null
+  http_status: number | null
+  link_url: string | null
+  error_message: string | null
+  is_broken: boolean
+  resolved: boolean
+  resolved_by?: string | null
+  resolved_at?: string | null
+  aor_owner: string | null
+}
+
 export interface BugReport {
   id: string
   reporter_id: string
@@ -102,6 +138,7 @@ export interface BugReport {
 // Labels for display
 export const REQUEST_TYPE_LABELS: Record<RequestType, string> = {
   new_panel: 'New Panel',
+  correction: 'Correction',
   panel_correction: 'Panel Correction',
   category_change: 'Category Change',
   spotlight_record: 'Spotlight Record',

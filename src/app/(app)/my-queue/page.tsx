@@ -1,15 +1,8 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import type { Profile } from '@/lib/types/database'
+import type { LinkIssue, Profile, QueuePreferences, WorkRequest } from '@/lib/types/database'
 import { MyQueueClient } from './my-queue-client'
 import { PageGuard } from '@/components/page-guard'
-
-function toIsoDateUTC(date: Date) {
-  const year = date.getUTCFullYear()
-  const month = String(date.getUTCMonth() + 1).padStart(2, '0')
-  const day = String(date.getUTCDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
 
 export default async function MyQueuePage() {
   const supabase = createClient()
@@ -48,17 +41,70 @@ export default async function MyQueuePage() {
       .order('priority', { ascending: true })
     : { data: [] }
 
-  const now = new Date()
-  const nextWeekDate = new Date(now)
-  nextWeekDate.setUTCDate(now.getUTCDate() + 7)
+  const firstName = profile.full_name?.split(' ')[0] ?? ''
+
+  const [
+    queuePrefsRes,
+    linkIssuesRes,
+    correctionsRes,
+    submittedRequestsRes,
+    assignedRequestsRes,
+  ] = await Promise.all([
+    supabase
+      .from('queue_preferences')
+      .select('*')
+      .eq('user_id', user.id)
+      .maybeSingle(),
+    supabase
+      .from('site_quality_link_results')
+      .select('id, page_label, page_url, panel_image, slot, ad_week, http_status, link_url, error_message, is_broken, resolved, resolved_by, resolved_at, aor_owner')
+      .eq('resolved', false)
+      .ilike('aor_owner', firstName)
+      .order('page_label', { ascending: true }),
+    supabase
+      .from('work_requests')
+      .select('id, title, description, priority, status, due_date, created_at')
+      .eq('assigned_to', user.id)
+      .eq('request_type', 'correction')
+      .neq('status', 'complete')
+      .order('due_date', { ascending: true }),
+    supabase
+      .from('work_requests')
+      .select('id, title, request_type, priority, status, due_date, created_at')
+      .eq('requester_id', user.id)
+      .neq('status', 'complete')
+      .order('created_at', { ascending: false }),
+    supabase
+      .from('work_requests')
+      .select('id, title, request_type, priority, status, due_date, requester_id, created_at')
+      .eq('assigned_to', user.id)
+      .neq('status', 'complete')
+      .order('due_date', { ascending: true }),
+  ])
+
+  let allLinkIssues: LinkIssue[] | null = null
+
+  if (profile.role === 'admin') {
+    const { data } = await supabase
+      .from('site_quality_link_results')
+      .select('id, page_label, page_url, panel_image, slot, ad_week, http_status, link_url, error_message, is_broken, resolved, aor_owner')
+      .eq('resolved', false)
+      .order('aor_owner', { ascending: true })
+
+    allLinkIssues = (data ?? []) as LinkIssue[]
+  }
 
   return (
     <PageGuard pageSlug="my-queue">
       <MyQueueClient
         profile={profile as Profile}
         panels={panels ?? []}
-        todayIso={toIsoDateUTC(now)}
-        nextWeekIso={toIsoDateUTC(nextWeekDate)}
+        queuePrefs={(queuePrefsRes.data ?? null) as QueuePreferences | null}
+        linkIssues={(linkIssuesRes.data ?? []) as LinkIssue[]}
+        allLinkIssues={allLinkIssues}
+        corrections={(correctionsRes.data ?? []) as WorkRequest[]}
+        submittedRequests={(submittedRequestsRes.data ?? []) as WorkRequest[]}
+        assignedRequests={(assignedRequestsRes.data ?? []) as WorkRequest[]}
       />
     </PageGuard>
   )

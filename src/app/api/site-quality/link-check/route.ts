@@ -23,6 +23,11 @@ type ScanPageBody = {
   totalPages: number
 }
 
+type ResolveBody = {
+  action?: 'resolve'
+  id: string
+}
+
 function normalizeOwner(value: string | undefined) {
   if (!value) return ''
   return value.trim().toLowerCase()
@@ -287,6 +292,44 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json({ error: 'Unsupported action' }, { status: 400 })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unexpected error'
+    return NextResponse.json({ error: message }, { status: 500 })
+  }
+}
+
+export async function PATCH(request: NextRequest) {
+  try {
+    const auth = createAuthClient()
+    const {
+      data: { user },
+    } = await auth.auth.getUser()
+
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const body = (await request.json().catch(() => null)) as ResolveBody | null
+
+    if (!body?.id) {
+      return NextResponse.json({ error: 'id is required' }, { status: 400 })
+    }
+
+    const supabase = createServiceRoleClient()
+    const { error } = await supabase
+      .from('site_quality_link_results')
+      .update({
+        resolved: true,
+        resolved_by: user.id,
+        resolved_at: new Date().toISOString(),
+      })
+      .eq('id', body.id)
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+
+    return NextResponse.json({ success: true })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unexpected error'
     return NextResponse.json({ error: message }, { status: 500 })
