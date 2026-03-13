@@ -3,7 +3,7 @@
 import { Fragment, type ReactNode, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { Activity, BarChart3, Bug, ChevronDown, ChevronRight, GalleryHorizontalEnd, Gauge, Package, Search, Shield } from 'lucide-react'
+import { Activity, BarChart3, Bug, CalendarDays, ChevronDown, ChevronRight, GalleryHorizontalEnd, Gauge, Package, Search, Shield } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { getEffectiveAccess, getUserRole } from '@/lib/permissions'
 import { NAV_ITEMS, formatRoleName } from '@/lib/nav-config'
@@ -17,6 +17,7 @@ const ICON_MAP: Record<string, IconComponent> = {
   ListTodo: ListTodoIcon,
   CalendarRange: CalendarRangeIcon,
   Calendar: CalendarIcon,
+  CalendarDays: CalendarDays,
   Code: CodeIcon,
   Layout: LayoutIcon,
   GalleryHorizontalEnd: GalleryHorizontalEnd,
