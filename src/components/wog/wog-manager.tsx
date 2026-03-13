@@ -1,8 +1,8 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { Code2, Loader2, Plus } from 'lucide-react'
-import CodeGeneratorModal from '@/components/wog/code-generator-modal'
+import { Copy, Loader2, Plus } from 'lucide-react'
+import { ENDECA_SNIPPET } from '@/components/wog/endeca-snippet'
 import EventCard from '@/components/wog/event-card'
 import EventFormModal, { type WogEventDraft } from '@/components/wog/event-form-modal'
 import type { WogEvent, WogEventStatus } from '@/types/wog'
@@ -37,7 +37,7 @@ const LANE_META: Record<WogEventStatus, { label: string; hint: string; borderCla
   },
   past: {
     label: 'Past Events',
-    hint: 'Move completed events here for code generation.',
+    hint: 'Move completed events here to keep them live in the Previous Events section.',
     borderClass: 'border-[rgba(100,116,139,0.4)]',
   },
   archived: {
@@ -85,12 +85,12 @@ export default function WogManager({ initialEvents }: Props) {
   const [archived, setArchived] = useState<WogEvent[]>(initial.archived)
   const [editingEvent, setEditingEvent] = useState<WogEvent | null>(null)
   const [showAddModal, setShowAddModal] = useState(false)
-  const [showCodeModal, setShowCodeModal] = useState(false)
   const [dragging, setDragging] = useState<DraggingState>(null)
   const [dragOverLane, setDragOverLane] = useState<WogEventStatus | null>(null)
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [notice, setNotice] = useState<Notice>(null)
+  const [setupCopied, setSetupCopied] = useState(false)
 
   function setLanes(next: LaneState) {
     setUpcoming(next.upcoming)
@@ -354,28 +354,18 @@ export default function WogManager({ initialEvents }: Props) {
           <p className="text-xs font-semibold uppercase tracking-[0.24em] text-sky-300">Content Management</p>
           <h1 className="mt-2 text-3xl font-semibold text-white">WOG Event Manager</h1>
           <p className="mt-2 max-w-3xl text-sm text-brand-300">
-            Manage Upcoming, Past, and Archived Waves of Gratitude events, then generate the production HTML for Endeca.
+            Manage Upcoming, Past, and Archived Waves of Gratitude events. Published changes are picked up live by the public WOG endpoint.
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={() => setShowAddModal(true)}
-            className="inline-flex items-center gap-2 rounded-xl border border-brand-700 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-brand-800/60"
-          >
-            <Plus className="h-4 w-4" />
-            Add Event
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowCodeModal(true)}
-            className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-sky-500"
-          >
-            <Code2 className="h-4 w-4" />
-            Generate Code
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => setShowAddModal(true)}
+          className="inline-flex items-center gap-2 rounded-xl border border-brand-700 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-brand-800/60"
+        >
+          <Plus className="h-4 w-4" />
+          Add Event
+        </button>
       </div>
 
       <div className="mt-6 grid gap-5 xl:grid-cols-3">
@@ -465,6 +455,38 @@ export default function WogManager({ initialEvents }: Props) {
         </div>
       ) : null}
 
+      <details className="mt-6 rounded-2xl border border-brand-800 bg-brand-900/60">
+        <summary className="cursor-pointer list-none px-4 py-3 text-sm font-medium text-white [&::-webkit-details-marker]:hidden">
+          One-time Endeca setup &#8250;
+        </summary>
+        <div className="border-t border-brand-800 px-4 pb-4 pt-4">
+          <h3 className="text-base font-semibold text-white">Endeca Cartridge Setup</h3>
+          <p className="mt-2 max-w-3xl text-sm text-brand-300">
+            This only needs to be pasted once. After the initial setup, all changes in Helm go live automatically.
+          </p>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs uppercase tracking-[0.18em] text-brand-400">LargeTextHome snippet</p>
+            <button
+              type="button"
+              onClick={async () => {
+                await navigator.clipboard.writeText(ENDECA_SNIPPET)
+                setSetupCopied(true)
+                window.setTimeout(() => setSetupCopied(false), 2000)
+              }}
+              className="inline-flex items-center gap-2 rounded-xl border border-brand-700 px-3 py-2 text-sm font-medium text-brand-100 transition-colors hover:bg-brand-800/50 hover:text-white"
+            >
+              <Copy className="h-4 w-4" />
+              {setupCopied ? 'Copied!' : 'Copy to Clipboard'}
+            </button>
+          </div>
+          <textarea
+            readOnly
+            value={ENDECA_SNIPPET}
+            className="mt-3 h-[320px] w-full rounded-2xl border border-brand-800 bg-brand-950/90 p-4 font-mono text-xs text-brand-100 outline-none"
+          />
+        </div>
+      </details>
+
       {(showAddModal || editingEvent) && (
         <EventFormModal
           event={editingEvent ?? undefined}
@@ -476,10 +498,6 @@ export default function WogManager({ initialEvents }: Props) {
           onSave={(draft) => void saveEvent(draft)}
         />
       )}
-
-      {showCodeModal ? (
-        <CodeGeneratorModal events={{ upcoming, past }} onClose={() => setShowCodeModal(false)} />
-      ) : null}
     </div>
   )
 }

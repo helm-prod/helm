@@ -1,4 +1,4 @@
-export const WOG_HTML_PREFIX = String.raw`<style type="text/css">
+export const ENDECA_SNIPPET = String.raw`<style type="text/css">
 
 .linktext{
        color: #ffffff;
@@ -219,13 +219,9 @@ p.coinmain {
 }
 </style>
 
-
-
-
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Open+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,600;1,700&family=Montserrat:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600;1,700&family=Raleway:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600;1,700&display=swap" rel="stylesheet">
-
 
 <div class="container">
   <div class="row mt-4 hidden-mobile">
@@ -236,7 +232,6 @@ p.coinmain {
     <div class="col-12"><img alt="Waves Of Gratitude Welcome" class="img-fluid" src="/assets/Static/WOG/25_Vendor Partner WOG-HEADER-Mobile(UPDATE).jpg"  />
     </div>
   </div>
-
 
   <div class="row mt-md-n5">
     <div class="col-12">
@@ -253,11 +248,9 @@ p.coinmain {
     </div>
   </div>
 
-
 <div class="row mt-3 mt-md-5">
 <div class="col-12"><h2 class="wog">Event Highlights</h2></div>
       </div>
-
 
 <script>var CRL8_SITENAME = 'nexcom-t6mqhu';!function(){var e=window.crl8=window.crl8||{},n=!1,i=[];e.ready=function(e){n?e():i.push(e)},e.pixel=e.pixel||function(){e.pixel.q.push(arguments)},e.pixel.q=e.pixel.q||[];var t=window.document,o=t.createElement("script"),c=e.debug||-1!==t.location.search.indexOf("crl8-debug=true")?"js":"min.js";o.async=!0,o.src=t.location.protocol+"//edge.curalate.com/sites/"+CRL8_SITENAME+"/site/latest/site."+c,o.onload=function(){n=!0,i.forEach(function(e){e()})};var r=t.getElementsByTagName("script")[0];r.parentNode.insertBefore(o,r.nextSibling)}();</script>
 
@@ -266,13 +259,12 @@ p.coinmain {
           <div data-crl8-container-id="gallery-k1dCMhXw"></div>
         </div>
       </div>
-`
 
-export const WOG_MILITARY_RECOGNITION = String.raw`<div class="row mt-5">
+      <div id="wog-upcoming-events"></div>
+
+<div class="row mt-5">
 <div class="col-12"><h2 class="wog">Military Recognition</h2></div>
       </div>
-
-
 
   <div class="row mt-4">
     <div class="col-6 col-md-3">
@@ -297,9 +289,14 @@ export const WOG_MILITARY_RECOGNITION = String.raw`<div class="row mt-5">
         <p class="copy">The NEX gives away a free CPO Challenge Coin to Chief Selectees to honor their service.</p>
     </div>
   </div>
-`
 
-export const WOG_PARTNERS_SUFFIX = String.raw`<div class="row mt-5">
+ <div class="row mt-5">
+<div class="col-12"><h2 class="wog">Previous Events</h2></div>
+      </div>
+
+  <div id="wog-past-events-container"></div>
+
+<div class="row mt-5">
 <div class="col-12"><h2 class="wog">5-Star Anchor Partners</h2></div>
 
 <div class="col-12">
@@ -307,10 +304,6 @@ export const WOG_PARTNERS_SUFFIX = String.raw`<div class="row mt-5">
 </div>
       </div>
 
-
-
-
-  
   <div class="row mt-4">
     <div class="col-12">
       <picture>
@@ -325,7 +318,6 @@ export const WOG_PARTNERS_SUFFIX = String.raw`<div class="row mt-5">
  <source media="(max-width: 799px)" srcset="/assets/Static/VendorPartners/25_Vendor Partner Web-Mobile_02.jpg"> 
  <source media="(min-width: 992px)" srcset="/assets/Static/VendorPartners/25_Vendor Partner Web-DT_02.jpg"> 
  <img src="/assets/Static/VendorPartners/25_Vendor Partner Web-DT_02.jpg" style="width: 100%;" alt="4 Star"/></picture></div>
-
 
 <div class="col-12 mt-2"><picture> 
  <source media="(max-width: 799px)" srcset="/assets/Static/WOG/25_VENDOR PARTNER WEB-MOBILE_03-NEW.jpg"> 
@@ -359,4 +351,74 @@ export const WOG_PARTNERS_SUFFIX = String.raw`<div class="row mt-5">
     
   </div>
 </div>
+
+<script>
+(function() {
+  var API = 'https://helm.nexweb.dev/api/wog/public';
+
+  function esc(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function formatDate(start, end) {
+    var opts = { month: 'long', day: 'numeric', year: 'numeric' };
+    var s = new Date(start + 'T00:00:00').toLocaleDateString('en-US', opts);
+    if (!end) return s;
+    var e = new Date(end + 'T00:00:00').toLocaleDateString('en-US', opts);
+    return s + ' \u2013 ' + e;
+  }
+
+  function renderUpcoming(events) {
+    var container = document.getElementById('wog-upcoming-events');
+    if (!container || !events.length) return;
+    var html = '<div class="row mt-2">';
+    events.forEach(function(ev) {
+      html += '<div class="col-md-3 col-6 gallery-item">';
+      html += '<div class="image-container"><img alt="' + esc(ev.event_name) + '" class="img-fluid" src="' + esc(ev.event_image_url) + '" /></div>';
+      html += '<p class="eventname">' + esc(ev.event_name) + '</p>';
+      html += '<p class="eventdate">' + formatDate(ev.start_date, ev.end_date) + '</p>';
+      if (ev.description) html += '<p class="desc hidden-mobile">' + esc(ev.description) + '</p>';
+      if (ev.special_notes) html += '<p class="desc hidden-mobile">' + esc(ev.special_notes) + '</p>';
+      var hasCta = ev.cta1_title || ev.cta2_title;
+      if (hasCta) {
+        html += '<div class="cta-buttons">';
+        if (ev.cta1_title && ev.cta1_link) html += '<a href="' + esc(ev.cta1_link) + '" class="cta-button">' + esc(ev.cta1_title) + '</a>';
+        if (ev.cta2_title && ev.cta2_link) html += '<a href="' + esc(ev.cta2_link) + '" class="cta-button">' + esc(ev.cta2_title) + '</a>';
+        html += '</div>';
+      }
+      html += '</div>';
+    });
+    html += '</div>';
+    container.innerHTML = html;
+  }
+
+  function renderPast(events) {
+    var container = document.getElementById('wog-past-events-container');
+    if (!container || !events.length) return;
+    var html = '<div class="row mt-4">';
+    events.forEach(function(ev) {
+      html += '<div class="col-md-3 col-6">';
+      html += '<img alt="' + esc(ev.event_name) + '" class="img-fluid" src="' + esc(ev.event_image_url) + '" style="filter:grayscale(30%);width:100%;height:auto;" />';
+      html += '<p class="title">' + esc(ev.event_name) + '</p>';
+      html += '<p class="copy">' + formatDate(ev.start_date, ev.end_date) + '</p>';
+      if (ev.description) html += '<p class="copy hidden-mobile">' + esc(ev.description) + '</p>';
+      html += '</div>';
+    });
+    html += '</div>';
+    container.innerHTML = html;
+  }
+
+  fetch(API)
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      renderUpcoming(data.upcoming || []);
+      renderPast(data.past || []);
+    })
+    .catch(function() {});
+})();
+</script>
 `

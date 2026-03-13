@@ -2,7 +2,7 @@ import { type NextRequest, NextResponse } from 'next/server'
 import { updateSession } from '@/lib/supabase/middleware'
 
 // Public API routes that bypass auth middleware
-const PUBLIC_API_PREFIXES = ['/api/carousels']
+const PUBLIC_API_PREFIXES = ['/api/carousels', '/api/wog/public']
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
