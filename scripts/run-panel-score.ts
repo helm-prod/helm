@@ -36,120 +36,94 @@ async function getAuthenticatedPage() {
 
   console.log(`Navigating to login page: ${loginUrl}`)
   await page.goto(loginUrl, { waitUntil: 'domcontentloaded', timeout: 30000 })
+  await page.waitForTimeout(2000)
 
-  // Wait a moment for any JS to hydrate the form
-  await page.waitForTimeout(3000)
-
-  // Debug: log page state
-  const pageTitle = await page.title()
-  const pageUrl = page.url()
-  console.log(`Page title: ${pageTitle}`)
-  console.log(`Page URL: ${pageUrl}`)
-
-  // Take a screenshot immediately so we can see what loaded
-  await page.screenshot({ path: '/tmp/login-page.png', fullPage: true })
-  console.log('Screenshot saved to /tmp/login-page.png')
-
-  // Log all input elements found on the page
-  const inputs = await page.evaluate(() => {
-    return Array.from(document.querySelectorAll('input, button, a[href*="login"], a[href*="sign"]')).map((el) => ({
-      tag: el.tagName,
-      type: (el as HTMLInputElement).type || '',
-      name: (el as HTMLInputElement).name || '',
-      id: el.id || '',
-      className: el.className || '',
-      text: el.textContent?.trim().slice(0, 50) || '',
-      visible: (el as HTMLElement).offsetParent !== null,
-    }))
-  })
-  console.log('Form elements found:', JSON.stringify(inputs, null, 2))
+  console.log(`Page title: ${await page.title()}`)
+  console.log(`Page URL: ${page.url()}`)
+  await page.screenshot({ path: '/tmp/login-page.png', fullPage: false })
 
   try {
-    // Wait for email field
-    await page.waitForSelector(
-      'input[type="email"], input[name="email"], input[name*="email"], input[id*="email"], input[name*="login"], input[name*="username"]',
-      { state: 'visible', timeout: 20000 }
-    )
+    // Email field — ATG uses type="text" for email inputs, not type="email"
+    // Use click + type instead of fill() to trigger ATG's JS event handlers
+    const emailSelector = 'input[name="email"], input[id*="email"], input[name*="login"], input[placeholder*="email" i], input[type="email"], input[type="text"]:first-of-type'
 
-    await page.fill(
-      'input[type="email"], input[name="email"], input[name*="email"], input[id*="email"], input[name*="login"], input[name*="username"]',
-      process.env.NEXCOM_BOT_EMAIL!
-    )
+    await page.waitForSelector(emailSelector, { state: 'visible', timeout: 20000 })
+    await page.click(emailSelector)
+    await page.waitForTimeout(300)
+    await page.type(emailSelector, process.env.NEXCOM_BOT_EMAIL!, { delay: 50 })
 
-    await page.fill(
-      'input[type="password"], input[name="password"], input[name*="password"], input[id*="password"]',
-      process.env.NEXCOM_BOT_PASSWORD!
-    )
+    console.log('Email typed')
 
-    console.log('Filled email and password fields')
+    // Password field
+    const passwordSelector = 'input[type="password"]'
+    await page.waitForSelector(passwordSelector, { state: 'visible', timeout: 10000 })
+    await page.click(passwordSelector)
+    await page.waitForTimeout(300)
+    await page.type(passwordSelector, process.env.NEXCOM_BOT_PASSWORD!, { delay: 50 })
 
-    // Take screenshot after filling fields
-    await page.screenshot({ path: '/tmp/login-filled.png', fullPage: true })
+    console.log('Password typed')
+    await page.screenshot({ path: '/tmp/login-filled.png', fullPage: false })
 
-    // Try multiple submit strategies in order
-    const submitted = await page.evaluate(() => {
-      const submitBtn = document.querySelector('button[type="submit"], input[type="submit"]') as HTMLElement | null
-      if (submitBtn) {
-        submitBtn.click()
-        return 'submit-button'
-      }
+    // Submit — try multiple strategies
+    // Strategy 1: Press Enter on the password field (most reliable for ATG)
+    await page.keyboard.press('Enter')
+    console.log('Pressed Enter to submit')
 
-      const buttons = Array.from(document.querySelectorAll('button, a, div[role="button"], span[role="button"]'))
-      const loginBtn = buttons.find((el) => {
-        const text = el.textContent?.toLowerCase() || ''
-        return text.includes('sign in') || text.includes('log in') || text.includes('login') || text.includes('submit')
-      }) as HTMLElement | null
-      if (loginBtn) {
-        loginBtn.click()
-        return 'text-button:' + loginBtn.textContent?.trim()
-      }
-
-      const form = document.querySelector('form') as HTMLFormElement | null
-      if (form) {
-        form.submit()
-        return 'form-submit'
-      }
-
-      return null
-    })
-
-    console.log(`Submit strategy used: ${submitted}`)
-
-    if (!submitted) {
-      throw new Error('Could not find any login button or form to submit')
-    }
-
-    // Wait for navigation after login
-    await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {
-      console.log('No navigation after submit (may have used JS-based login)')
-    })
+    // Wait for navigation
+    await Promise.race([
+      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }),
+      page.waitForTimeout(15000),
+    ])
 
     await page.waitForTimeout(2000)
 
-    const postLoginTitle = await page.title()
     const postLoginUrl = page.url()
-    console.log(`Post-login title: ${postLoginTitle}`)
+    const postLoginTitle = await page.title()
     console.log(`Post-login URL: ${postLoginUrl}`)
+    console.log(`Post-login title: ${postLoginTitle}`)
     await page.screenshot({ path: '/tmp/post-login.png', fullPage: false })
+
+    // If still on sign-in page, try clicking the button directly
+    if (postLoginUrl.includes('sign-in') || postLoginUrl.includes('login')) {
+      console.log('Still on login page after Enter — trying button click')
+      const clicked = await page.evaluate(() => {
+        // Look for the sign-in button by value or text
+        const candidates = Array.from(document.querySelectorAll('input[type="submit"], button[type="submit"], button, a'))
+        const btn = candidates.find((el) => {
+          const text = (el.textContent || (el as HTMLInputElement).value || '').toUpperCase().trim()
+          return text === 'SIGN IN' || text === 'LOGIN' || text === 'LOG IN' || text === 'SUBMIT'
+        }) as HTMLElement | null
+        if (btn) {
+          btn.click()
+          return btn.tagName + ':' + ((btn as HTMLInputElement).value || btn.textContent?.trim())
+        }
+        return null
+      })
+      console.log(`Button click result: ${clicked}`)
+      await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {})
+      await page.waitForTimeout(2000)
+      await page.screenshot({ path: '/tmp/post-login-retry.png', fullPage: false })
+    }
   } catch (err) {
-    await page.screenshot({ path: '/tmp/login-error.png', fullPage: true }).catch(() => {})
+    await page.screenshot({ path: '/tmp/login-error.png', fullPage: false }).catch(() => {})
+    console.error('Login error:', err)
     throw err
   }
 
-  const isLoggedIn = await page.evaluate(() => {
-    return (
-      document.body.innerText.includes('Hi ') ||
-      !!document.querySelector('[href*="sign-out"], [href*="logout"], [href*="signout"]')
-    )
-  })
+  const finalUrl = page.url()
+  const isLoggedIn = !finalUrl.includes('sign-in') && !finalUrl.includes('login') ||
+    await page.evaluate(() => {
+      return (
+        document.body.innerText.includes('Hi ') ||
+        !!document.querySelector('[href*="sign-out"], [href*="logout"], [href*="signout"]')
+      )
+    })
+
+  console.log(`Final URL: ${finalUrl}`)
+  console.log(`Is logged in: ${isLoggedIn}`)
 
   if (!isLoggedIn) {
-    await page.screenshot({ path: '/tmp/login-failed.png', fullPage: false }).catch(() => {})
-    console.log('Login check failed - not detecting logged-in state')
-    // Don't throw here - continue anyway and let the scraper determine if pages load correctly
-    console.log('Proceeding despite login check failure...')
-  } else {
-    console.log('Login verified successfully')
+    console.log('WARNING: Login may have failed — proceeding anyway')
   }
 
   return { browser, page }
