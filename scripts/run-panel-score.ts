@@ -134,7 +134,9 @@ async function scorePanelWithPage(
     categoryFolder?: string
   }
 ) {
-  await page.goto(panel.outboundUrl, { waitUntil: 'networkidle', timeout: 20000 })
+  await page.goto(panel.outboundUrl, { waitUntil: 'domcontentloaded', timeout: 30000 })
+  // Give JS a moment to render product/price content after DOM is ready
+  await page.waitForTimeout(2000)
   const outboundPageTitle = await page.title()
   const outboundScreenshot = await page.screenshot({ type: 'jpeg', quality: 75, fullPage: false })
   const outboundBase64 = outboundScreenshot.toString('base64')
