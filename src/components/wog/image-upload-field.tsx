@@ -29,6 +29,12 @@ async function uploadImage(file: File): Promise<string> {
   return data.publicUrl
 }
 
+function resolvePreviewSrc(imageUrl: string) {
+  return imageUrl.startsWith('http')
+    ? imageUrl
+    : `https://www.mynavyexchange.com${imageUrl}`
+}
+
 export default function ImageUploadField({
   value,
   onChange,
@@ -43,6 +49,7 @@ export default function ImageUploadField({
   const [fileLabel, setFileLabel] = useState<string>('Uploaded')
 
   const previewLabel = useMemo(() => (value ? fileLabel : ''), [fileLabel, value])
+  const previewSrc = useMemo(() => (value ? resolvePreviewSrc(value) : null), [value])
 
   function setUploadState(uploading: boolean) {
     setIsUploading(uploading)
@@ -87,7 +94,7 @@ export default function ImageUploadField({
       {value ? (
         <div className="relative inline-flex max-w-[200px] flex-col gap-2">
           <div className="overflow-hidden rounded-2xl border border-brand-700 bg-brand-950/80">
-            <img src={value} alt="Selected event" className="h-auto max-w-[200px] rounded-2xl object-cover" />
+            <img src={previewSrc ?? value} alt="Selected event" className="h-auto max-w-[200px] rounded-2xl object-cover" />
           </div>
           <p className="text-xs text-slate-400">{previewLabel || 'Uploaded'}</p>
           <button

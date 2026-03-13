@@ -37,6 +37,12 @@ function formatDateLabel(startDate: string, endDate: string | null) {
   return `${formatter.format(start)} - ${formatter.format(end)}`
 }
 
+function resolveThumbnailSrc(imageUrl: string) {
+  return imageUrl.startsWith('http')
+    ? imageUrl
+    : `https://www.mynavyexchange.com${imageUrl}`
+}
+
 export default function EventCard({
   event,
   onEdit,
@@ -50,6 +56,7 @@ export default function EventCard({
   onDragOver,
   onDrop,
 }: Props) {
+  const thumbnailSrc = resolveThumbnailSrc(event.event_image_url)
   const moveButtons: Array<{ label: string; status: WogEventStatus; className: string }> =
     event.status === 'upcoming'
       ? [{ label: '→ Past', status: 'past', className: 'bg-slate-700 text-slate-200' }]
@@ -75,7 +82,7 @@ export default function EventCard({
     >
       <div className="flex gap-3">
         <div className="relative h-[60px] w-[60px] shrink-0 overflow-hidden rounded-xl border border-brand-700/70 bg-brand-950/80">
-          <img src={event.event_image_url} alt={event.event_name} className="h-full w-full object-cover" />
+          <img src={thumbnailSrc} alt={event.event_name} className="h-full w-full object-cover" />
         </div>
 
         <div className="min-w-0 flex-1">
