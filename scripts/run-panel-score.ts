@@ -201,18 +201,44 @@ async function scorePanelWithPage(
 }
 
 async function main() {
-  const runId = process.env.PANEL_SCORE_RUN_ID
-  if (!runId) throw new Error('PANEL_SCORE_RUN_ID env var is required')
+  let runId = process.env.PANEL_SCORE_RUN_ID
+
+  if (!runId) {
+    // Running standalone (manual dispatch or local) — create our own run record
+    const { data: newRun, error: insertError } = await supabase
+      .from('site_quality_panel_runs')
+      .insert({
+        status: 'pending',
+        trigger: 'manual',
+        trigger_type: 'manual',
+      })
+      .select('id')
+      .single()
+
+    if (insertError || !newRun) {
+      console.error('Failed to create run record:', insertError)
+      console.error('SUPABASE_URL:', process.env.SUPABASE_URL ? 'set' : 'MISSING')
+      console.error('SUPABASE_SERVICE_ROLE_KEY:', process.env.SUPABASE_SERVICE_ROLE_KEY ? 'set' : 'MISSING')
+      throw new Error(`Cannot create run record: ${insertError?.message}`)
+    }
+
+    runId = newRun.id
+    console.log(`Created new run record: ${runId}`)
+  } else {
+    console.log(`Using provided run ID: ${runId}`)
+  }
 
   const adWeekEnv = process.env.PANEL_SCORE_AD_WEEK
   const adWeek = adWeekEnv ? parseInt(adWeekEnv, 10) : undefined
 
   console.log(`Starting panel score run ${runId}${adWeek ? ` for ad week ${adWeek}` : ''}`)
 
-  await supabase.from('site_quality_panel_runs').update({
+  const { error: runningError } = await supabase.from('site_quality_panel_runs').update({
     status: 'running',
     started_at: new Date().toISOString(),
   }).eq('id', runId)
+  if (runningError) console.error('Failed to set running status:', runningError)
+  else console.log('Run status set to running')
 
   const { browser, page } = await getAuthenticatedPage()
 
@@ -267,15 +293,18 @@ async function main() {
         panel_image_url: item.panelImageUrl,
       }))
 
-      const { error } = await supabase.from('site_quality_panel_results').insert(inserts)
-      if (error) throw error
+      const { error: resultError } = await supabase.from('site_quality_panel_results').insert(inserts)
+      if (resultError) {
+        console.error('Failed to insert panel result:', resultError)
+        throw resultError
+      }
     }
 
     const issueCount = results.reduce((sum, item) => sum + item.issues.filter((i) => i.type !== 'none').length, 0)
     const passingCount = results.filter((item) => item.score >= 80).length
     const avgScore = results.length > 0 ? results.reduce((sum, item) => sum + item.score, 0) / results.length : null
 
-    await supabase.from('site_quality_panel_runs').update({
+    const { error: completeError } = await supabase.from('site_quality_panel_runs').update({
       status: 'complete',
       panels_scored: results.length,
       avg_score: avgScore,
@@ -283,14 +312,17 @@ async function main() {
       panels_flagged: passingCount,
       completed_at: new Date().toISOString(),
     }).eq('id', runId)
+    if (completeError) console.error('Failed to set complete status:', completeError)
+    else console.log(`Run complete. panels_scored=${results.length} avg_score=${avgScore}`)
 
     console.log(`Done. ${results.length} panels scored, ${issueCount} issues, avg score ${avgScore?.toFixed(1)}`)
   } catch (error) {
     console.error('Scoring failed:', error)
-    await supabase.from('site_quality_panel_runs').update({
+    const { error: failedError } = await supabase.from('site_quality_panel_runs').update({
       status: 'failed',
       completed_at: new Date().toISOString(),
     }).eq('id', runId)
+    if (failedError) console.error('Failed to set failed status:', failedError)
     process.exit(1)
   } finally {
     await browser.close()
