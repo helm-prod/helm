@@ -1,10 +1,28 @@
-import chromium from '@sparticuz/chromium'
 import playwright from 'playwright-core'
 
-export async function getAuthenticatedPage() {
-  const browser = await playwright.chromium.launch({
-    args: chromium.args,
+async function getLaunchOptions() {
+  // On GitHub Actions (or any CI), use the system Playwright chromium
+  if (process.env.CI) {
+    return {
+      executablePath: undefined,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+    }
+  }
+
+  // On Vercel (serverless), use @sparticuz/chromium
+  const chromium = (await import('@sparticuz/chromium')).default
+  return {
     executablePath: await chromium.executablePath(),
+    args: chromium.args,
+  }
+}
+
+export async function getAuthenticatedPage() {
+  const { executablePath, args } = await getLaunchOptions()
+
+  const browser = await playwright.chromium.launch({
+    executablePath,
+    args,
     headless: true,
   })
 
@@ -21,8 +39,10 @@ export async function getAuthenticatedPage() {
   await page.waitForNavigation({ waitUntil: 'networkidle', timeout: 15000 })
 
   const isLoggedIn = await page.evaluate(() => {
-    return document.body.innerText.includes('Hi ') ||
+    return (
+      document.body.innerText.includes('Hi ') ||
       !!document.querySelector('[href*="sign-out"], [href*="logout"]')
+    )
   })
 
   if (!isLoggedIn) {

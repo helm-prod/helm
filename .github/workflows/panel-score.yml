@@ -1,0 +1,70 @@
+name: Panel Intelligence Scoring
+
+on:
+  schedule:
+    - cron: '30 13 * * 1'
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Supabase run ID (created by the Helm API route). Leave empty for a fresh scheduled run.'
+        required: false
+        default: ''
+      ad_week:
+        description: 'Ad week number to filter panels (optional)'
+        required: false
+        default: ''
+
+jobs:
+  score-panels:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Create run record (scheduled runs only)
+        if: inputs.run_id == '' || inputs.run_id == null
+        id: create_run
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          RUN_ID=$(node -e "
+            const { createClient } = require('@supabase/supabase-js');
+            const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+            supabase.from('site_quality_panel_runs')
+              .insert({ trigger: 'scheduled', status: 'pending', created_by: null })
+              .select('id')
+              .single()
+              .then(({ data, error }) => {
+                if (error) { console.error(error); process.exit(1); }
+                console.log(data.id);
+              });
+          ")
+          echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
+
+      - name: Score panels
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NEXCOM_BOT_EMAIL: ${{ secrets.NEXCOM_BOT_EMAIL }}
+          NEXCOM_BOT_PASSWORD: ${{ secrets.NEXCOM_BOT_PASSWORD }}
+          NEXCOM_SITE_URL: ${{ secrets.NEXCOM_SITE_URL }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PANEL_SCORE_RUN_ID: ${{ inputs.run_id || steps.create_run.outputs.run_id }}
+          PANEL_SCORE_AD_WEEK: ${{ inputs.ad_week }}
+          CI: 'true'
+        run: npx tsx scripts/run-panel-score.ts
