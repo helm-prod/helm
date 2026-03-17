@@ -73,11 +73,30 @@ export interface PanelScoreResult {
 }
 
 function parseClaudeJson(raw: string) {
-  return JSON.parse(raw.replace(/```json|```/g, '').trim()) as {
-    score: number
-    issues: Array<{ type: PanelIssueType; detail: string }>
-    reasoning: string
-    destination_relevance_keywords?: string[] | null
+  let cleaned = raw.trim()
+  cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '')
+
+  const firstBrace = cleaned.indexOf('{')
+  const lastBrace = cleaned.lastIndexOf('}')
+  const firstBracket = cleaned.indexOf('[')
+  const lastBracket = cleaned.lastIndexOf(']')
+
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    cleaned = cleaned.slice(firstBrace, lastBrace + 1)
+  } else if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
+    cleaned = cleaned.slice(firstBracket, lastBracket + 1)
+  }
+
+  try {
+    return JSON.parse(cleaned) as {
+      score: number
+      issues: Array<{ type: PanelIssueType; detail: string }>
+      reasoning: string
+      destination_relevance_keywords?: string[] | null
+    }
+  } catch {
+    console.error('JSON parse failed. Raw response (first 500 chars):', raw.slice(0, 500))
+    return null
   }
 }
 
@@ -113,6 +132,29 @@ function buildBaseResult(panel: PanelInput) {
     slot: panel.slot,
     isStale: panel.isStale,
     categoryFolder: panel.categoryFolder,
+    panelImageUrl: panel.panelImageUrl,
+  }
+}
+
+function buildPanelFailureResult(panel: PanelInput, reasoning: string): PanelScoreResult {
+  return {
+    ...buildBaseResult(panel),
+    panelType: undefined,
+    featuredProduct: null,
+    brandName: null,
+    priceShown: null,
+    offerLanguage: null,
+    ctaText: null,
+    destinationRelevanceKeywords: null,
+    hasEmptyResults: false,
+    isBotBlocked: false,
+    redirectCount: 0,
+    productCountOnDestination: null,
+    isOutOfStock: false,
+    score: null,
+    issues: [],
+    aiReasoning: reasoning,
+    outboundPageTitle: '',
     panelImageUrl: panel.panelImageUrl,
   }
 }
@@ -336,6 +378,28 @@ async function scorePanelWithPage(page: Awaited<ReturnType<typeof getAuthenticat
   }
 
   const parsed = parseClaudeJson(textBlock.text)
+  if (!parsed) {
+    return {
+      ...baseResult,
+      panelType: panelFacts.panel_type,
+      featuredProduct: panelFacts.featured_product,
+      brandName: panelFacts.brand_name,
+      priceShown: panelFacts.price_shown,
+      offerLanguage: panelFacts.offer_language,
+      ctaText: panelFacts.cta_text,
+      destinationRelevanceKeywords: null,
+      hasEmptyResults: outboundText.hasEmptyResults,
+      isBotBlocked: false,
+      redirectCount,
+      productCountOnDestination: outboundText.productCount ?? null,
+      isOutOfStock: outboundText.isOutOfStock ?? false,
+      score: null,
+      issues: [],
+      aiReasoning: 'Scoring failed: unable to parse AI response.',
+      outboundPageTitle,
+      panelImageUrl: panel.panelImageUrl,
+    }
+  }
   return {
     ...baseResult,
     panelType: panelFacts.panel_type,
@@ -385,7 +449,7 @@ export async function scoreLivePanels(adWeek?: number) {
 
       for (let index = 0; index < panels.length; index += 1) {
         const panel = panels[index]
-        const scored = await scorePanelWithPage(page, {
+        const panelInput = {
           panelId: `${l1Page.label}-${panel.slot}-${index + 1}`,
           panelName: panel.altText || `${l1Page.label} ${panel.slot}`,
           categoryL1: l1Page.label,
@@ -398,8 +462,16 @@ export async function scoreLivePanels(adWeek?: number) {
           slot: panel.slot,
           isStale: panel.isStale,
           categoryFolder: panel.categoryFolder,
-        })
-        results.push(scored)
+        }
+
+        try {
+          const scored = await scorePanelWithPage(page, panelInput)
+          results.push(scored)
+        } catch (error) {
+          console.error(`Scoring failed for panel ${panelInput.panelName}:`, error)
+          const message = error instanceof Error ? error.message : String(error)
+          results.push(buildPanelFailureResult(panelInput, `Scoring failed: ${message}`))
+        }
       }
     }
 

@@ -84,11 +84,30 @@ function defaultPanelFacts(): PanelFacts {
 }
 
 function parseScoringJson(raw: string) {
-  return JSON.parse(raw.replace(/```json|```/g, '').trim()) as {
-    score: number
-    issues: Array<{ type: PanelIssueType; detail: string }>
-    reasoning: string
-    destination_relevance_keywords?: string[] | null
+  let cleaned = raw.trim()
+  cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '')
+
+  const firstBrace = cleaned.indexOf('{')
+  const lastBrace = cleaned.lastIndexOf('}')
+  const firstBracket = cleaned.indexOf('[')
+  const lastBracket = cleaned.lastIndexOf(']')
+
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    cleaned = cleaned.slice(firstBrace, lastBrace + 1)
+  } else if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
+    cleaned = cleaned.slice(firstBracket, lastBracket + 1)
+  }
+
+  try {
+    return JSON.parse(cleaned) as {
+      score: number
+      issues: Array<{ type: PanelIssueType; detail: string }>
+      reasoning: string
+      destination_relevance_keywords?: string[] | null
+    }
+  } catch {
+    console.error('JSON parse failed. Raw response (first 500 chars):', raw.slice(0, 500))
+    return null
   }
 }
 
@@ -108,6 +127,31 @@ function buildBaseResult(panel: {
 }) {
   return {
     ...panel,
+  }
+}
+
+function buildPanelFailureResult(
+  panel: Parameters<typeof buildBaseResult>[0],
+  reasoning: string
+): ScoredPanelResult {
+  return {
+    ...buildBaseResult(panel),
+    panelType: undefined,
+    featuredProduct: null,
+    brandName: null,
+    priceShown: null,
+    offerLanguage: null,
+    ctaText: null,
+    destinationRelevanceKeywords: null,
+    hasEmptyResults: false,
+    isBotBlocked: false,
+    redirectCount: 0,
+    productCountOnDestination: null,
+    isOutOfStock: false,
+    score: null,
+    issues: [],
+    aiReasoning: reasoning,
+    outboundPageTitle: '',
   }
 }
 
@@ -434,6 +478,27 @@ async function scorePanelWithPage(
   if (!textBlock || textBlock.type !== 'text') throw new Error('Claude did not return a text response')
 
   const parsed = parseScoringJson(textBlock.text)
+  if (!parsed) {
+    return {
+      ...baseResult,
+      panelType: panelFacts.panel_type,
+      featuredProduct: panelFacts.featured_product,
+      brandName: panelFacts.brand_name,
+      priceShown: panelFacts.price_shown,
+      offerLanguage: panelFacts.offer_language,
+      ctaText: panelFacts.cta_text,
+      destinationRelevanceKeywords: null,
+      hasEmptyResults: outboundText.hasEmptyResults,
+      isBotBlocked: false,
+      redirectCount,
+      productCountOnDestination: outboundText.productCount ?? null,
+      isOutOfStock: outboundText.isOutOfStock ?? false,
+      score: null,
+      issues: [],
+      aiReasoning: 'Scoring failed: unable to parse AI response.',
+      outboundPageTitle,
+    }
+  }
 
   return {
     ...baseResult,
@@ -509,9 +574,7 @@ async function main() {
 
       for (let i = 0; i < panels.length; i += 1) {
         const panel = panels[i]
-        console.log(`  Scoring panel ${i + 1}/${panels.length}: ${panel.slot}`)
-
-        const scored = await scorePanelWithPage(page, {
+        const panelInput = {
           panelId: `${l1Page.label}-${panel.slot}-${i + 1}`,
           panelName: panel.altText || `${l1Page.label} ${panel.slot}`,
           categoryL1: l1Page.label,
@@ -524,8 +587,17 @@ async function main() {
           slot: panel.slot,
           isStale: panel.isStale,
           categoryFolder: panel.categoryFolder,
-        })
-        results.push(scored)
+        }
+        console.log(`  Scoring panel ${i + 1}/${panels.length}: ${panelInput.panelName}`)
+
+        try {
+          const scored = await scorePanelWithPage(page, panelInput)
+          results.push(scored)
+        } catch (error) {
+          console.error(`Scoring failed for panel ${panelInput.panelName}:`, error)
+          const message = error instanceof Error ? error.message : String(error)
+          results.push(buildPanelFailureResult(panelInput, `Scoring failed: ${message}`))
+        }
       }
     }
 
