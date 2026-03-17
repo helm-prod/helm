@@ -5,7 +5,7 @@ export interface L1PageConfig {
 }
 
 export const L1_PAGES: L1PageConfig[] = [
-  { label: 'Homepage', url: 'https://www.mynavyexchange.com' },
+  { label: 'Homepage', url: 'https://www.mynavyexchange.com', aorOwner: 'Megan' },
   { label: 'Military', url: 'https://www.mynavyexchange.com/browse/military/_/N-1413539776', aorOwner: 'Maddie' },
   { label: "Men's", url: 'https://www.mynavyexchange.com/browse/men-s/_/N-380633284', aorOwner: 'Megan' },
   { label: "Women's", url: 'https://www.mynavyexchange.com/browse/women-s/_/N-459937891', aorOwner: 'Megan' },

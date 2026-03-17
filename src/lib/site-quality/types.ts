@@ -46,8 +46,17 @@ export interface SiteQualityPanelRun {
   created_by: string | null
 }
 
+export type SiteQualityPanelIssueType =
+  | 'price_mismatch'
+  | 'item_not_found'
+  | 'dead_link'
+  | 'redirect'
+  | 'context_mismatch'
+  | 'bot_blocked'
+  | 'none'
+
 export interface SiteQualityPanelIssue {
-  type: string
+  type: SiteQualityPanelIssueType
   detail: string
 }
 
@@ -58,6 +67,14 @@ export interface SiteQualityPanelResult {
   panel_name: string
   category_l1: string
   source_page_url: string | null
+  panel_type?: 'PRODUCT' | 'BRAND' | 'CATEGORY'
+  featured_product?: string | null
+  price_shown?: string | null
+  offer_language?: string | null
+  is_bot_blocked?: boolean
+  redirect_count?: number
+  product_count_on_destination?: number | null
+  is_out_of_stock?: boolean
   outbound_url: string
   aor_owner: string
   ad_week: number | null
