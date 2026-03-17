@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js'
 import Anthropic from '@anthropic-ai/sdk'
 import playwright, { type Response } from 'playwright'
 import { L1_PAGES } from '../src/config/l1-pages'
+import { buildPass1UserMessage, buildPass2UserMessage, type PanelFacts } from '../src/lib/site-quality/panel-prompts'
 import { scrapePanels } from '../src/lib/site-quality/panel-scraper'
 
 const supabase = createClient(
@@ -11,22 +12,23 @@ const supabase = createClient(
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
-type PanelIssueType = 'price_mismatch' | 'item_not_found' | 'dead_link' | 'redirect' | 'context_mismatch' | 'bot_blocked' | 'none'
-
-interface PanelFacts {
-  panel_type: 'PRODUCT' | 'BRAND' | 'CATEGORY'
-  featured_product: string | null
-  brand_name: string | null
-  price_shown: string | null
-  offer_language: string | null
-  cta_text: string | null
-}
+type PanelIssueType =
+  | 'item_not_found'
+  | 'price_mismatch'
+  | 'wrong_destination'
+  | 'weak_correlation'
+  | 'empty_destination'
+  | 'dead_link'
+  | 'redirect'
+  | 'bot_blocked'
+  | 'none'
 
 interface OutboundText {
   prices: string[]
   headings: string[]
-  productCount: number
+  productCount: number | null
   isOutOfStock: boolean
+  hasEmptyResults: boolean
 }
 
 interface ScoredPanelResult {
@@ -44,8 +46,12 @@ interface ScoredPanelResult {
   categoryFolder?: string
   panelType?: 'PRODUCT' | 'BRAND' | 'CATEGORY'
   featuredProduct?: string | null
+  brandName?: string | null
   priceShown?: string | null
   offerLanguage?: string | null
+  ctaText?: string | null
+  destinationRelevanceKeywords?: string[] | null
+  hasEmptyResults?: boolean
   isBotBlocked?: boolean
   redirectCount?: number
   productCountOnDestination?: number | null
@@ -82,6 +88,7 @@ function parseScoringJson(raw: string) {
     score: number
     issues: Array<{ type: PanelIssueType; detail: string }>
     reasoning: string
+    destination_relevance_keywords?: string[] | null
   }
 }
 
@@ -223,14 +230,18 @@ async function scorePanelWithPage(
       ...baseResult,
       panelType: 'CATEGORY',
       featuredProduct: null,
+      brandName: null,
       priceShown: null,
       offerLanguage: null,
+      ctaText: null,
+      destinationRelevanceKeywords: null,
+      hasEmptyResults: false,
       isBotBlocked: false,
       redirectCount: 0,
       productCountOnDestination: null,
       isOutOfStock: false,
       score: 45,
-      issues: [{ type: 'context_mismatch', detail: 'Panel image URL is not configured for this scraped panel.' }],
+      issues: [{ type: 'wrong_destination', detail: 'Panel image URL is not configured for this scraped panel.' }],
       aiReasoning: 'Panel image URL is empty, so vision scoring could not compare the marketing creative to the destination page.',
       outboundPageTitle: '',
     }
@@ -249,26 +260,7 @@ async function scorePanelWithPage(
       content: [
         {
           type: 'text',
-          text: `You are analyzing a marketing panel image from a Navy Exchange e-commerce site.
-
-Extract the following facts from this panel image. Be specific and literal — only report what you can actually see.
-
-Respond in this exact JSON format only, no markdown:
-{
-  "panel_type": "<PRODUCT|BRAND|CATEGORY>",
-  "featured_product": "<specific product name visible in the panel, or null if none>",
-  "brand_name": "<brand name or logo visible, or null if none>",
-  "price_shown": "<exact price text visible in the panel image, or null if no price shown>",
-  "offer_language": "<any promotional or sale copy visible, e.g. 'Save 30%', 'Free Gift', 'New Arrivals', or null if none>",
-  "cta_text": "<call to action text if visible, e.g. 'Shop Now', 'Learn More', or null>"
-}
-
-Panel type definitions:
-- PRODUCT: Panel features a specific product. Customer expects to find and buy that exact product.
-- BRAND: Panel tells a brand story or shows a brand logo. Customer expects a brand landing page or brand products.
-- CATEGORY: Panel promotes a category or department. Customer expects a relevant category page.
-
-Only classify as PRODUCT if a specific named product is clearly visible. A brand logo with products shown is still BRAND.`
+          text: buildPass1UserMessage()
         },
         {
           type: 'image',
@@ -319,8 +311,12 @@ Only classify as PRODUCT if a specific named product is clearly visible. A brand
       ...baseResult,
       panelType: panelFacts.panel_type,
       featuredProduct: panelFacts.featured_product,
+      brandName: panelFacts.brand_name,
       priceShown: panelFacts.price_shown,
       offerLanguage: panelFacts.offer_language,
+      ctaText: panelFacts.cta_text,
+      destinationRelevanceKeywords: null,
+      hasEmptyResults: false,
       score: 0,
       issues: [{ type: 'dead_link', detail: `Navigation failed: ${navigationError}` }],
       aiReasoning: 'The destination URL could not be reached.',
@@ -337,8 +333,12 @@ Only classify as PRODUCT if a specific named product is clearly visible. A brand
       ...baseResult,
       panelType: panelFacts.panel_type,
       featuredProduct: panelFacts.featured_product,
+      brandName: panelFacts.brand_name,
       priceShown: panelFacts.price_shown,
       offerLanguage: panelFacts.offer_language,
+      ctaText: panelFacts.cta_text,
+      destinationRelevanceKeywords: null,
+      hasEmptyResults: false,
       score: null,
       issues: [{ type: 'bot_blocked', detail: 'Destination returned 403. Page may be access-restricted or blocking automated requests. Manual verification required.' }],
       aiReasoning: 'This URL requires manual review — automated access was blocked (403). This does not necessarily mean the link is broken.',
@@ -355,8 +355,12 @@ Only classify as PRODUCT if a specific named product is clearly visible. A brand
       ...baseResult,
       panelType: panelFacts.panel_type,
       featuredProduct: panelFacts.featured_product,
+      brandName: panelFacts.brand_name,
       priceShown: panelFacts.price_shown,
       offerLanguage: panelFacts.offer_language,
+      ctaText: panelFacts.cta_text,
+      destinationRelevanceKeywords: null,
+      hasEmptyResults: false,
       score: 0,
       issues: [{ type: 'dead_link', detail: `Destination returned HTTP ${httpStatus}.` }],
       aiReasoning: `The destination page returned an error (HTTP ${httpStatus}).`,
@@ -382,94 +386,35 @@ Only classify as PRODUCT if a specific named product is clearly visible. A brand
     const productCards = Array.from(document.querySelectorAll(
       '[class*="product-card"], [class*="product-item"], [class*="product-tile"], [class*="productCard"], [class*="productItem"]'
     ))
+    const productContainers = Array.from(document.querySelectorAll(
+      '[class*="product-grid"], [class*="product-list"], [class*="search-results"], [class*="results-grid"], [class*="results-list"]'
+    ))
     const bodyText = document.body.innerText.toLowerCase()
     const outOfStockSignals = ['out of stock', 'notify me when available', 'coming soon', 'temporarily unavailable', 'sold out']
+    const emptyResultSignals = ['no results', 'no products found', '0 results', 'nothing found', 'no items']
     const isOutOfStock = outOfStockSignals.some((signal) => bodyText.includes(signal))
+    const hasEmptyStateText = emptyResultSignals.some((signal) => bodyText.includes(signal))
+    const hasEmptyContainer = productContainers.some((container) => container.querySelectorAll(
+      '[class*="product-card"], [class*="product-item"], [class*="product-tile"], [class*="productCard"], [class*="productItem"]'
+    ).length === 0)
+    const hasEmptyResults = hasEmptyStateText || hasEmptyContainer || productCards.length === 0
 
     return {
       prices: priceEls.map((el) => el.textContent?.trim()).filter(Boolean).slice(0, 20) as string[],
       headings: headingEls.map((el) => el.textContent?.trim()).filter(Boolean).slice(0, 10) as string[],
       productCount: productCards.length,
       isOutOfStock,
+      hasEmptyResults,
     }
   }) as OutboundText
 
-  const scoringPrompt = `You are a quality checker for a Navy Exchange e-commerce site.
-
-PANEL FACTS (extracted from the panel image):
-- Panel type: ${panelFacts.panel_type}
-- Featured product: ${panelFacts.featured_product || 'none identified'}
-- Brand shown: ${panelFacts.brand_name || 'none identified'}
-- Price shown on panel: ${panelFacts.price_shown || 'none'}
-- Promotional copy: ${panelFacts.offer_language || 'none'}
-- CTA text: ${panelFacts.cta_text || 'none'}
-
-DESTINATION PAGE CONTEXT:
-- Title: ${outboundPageTitle}
-- HTTP status: ${httpStatus ?? 'unknown'}
-- Redirect hops: ${redirectCount}
-- Prices found on destination: ${outboundText.prices.join(', ') || 'none found'}
-- Headings/products found on destination: ${outboundText.headings.join(', ') || 'none found'}
-- Products visible above fold: ${outboundText.productCount ?? 'unknown'}
-- Out of stock signals detected: ${outboundText.isOutOfStock ? 'yes' : 'no'}
-
-Your job: using the panel facts above as ground truth, assess how well the destination page delivers on the promise made by the panel.
-
-SCORING RULES BY PANEL TYPE:
-
-PRODUCT panel (featured_product is not null):
-- 90-100: The specific featured product is clearly visible and purchasable.
-- 70-89: The featured product is present but not prominently featured.
-- 50-69: Correct category but the specific product is not findable.
-- 30-49: Loosely related destination but the featured product is absent.
-- 0-29: Destination is wrong, broken, or the product is completely absent.
-CRITICAL: If featured_product is not null, the destination MUST show that product. If it does not, flag item_not_found as the primary issue.
-
-BRAND panel:
-- 90-100: Destination is a landing page for that brand showing their products.
-- 70-89: Destination shows brand products but is not a dedicated brand page.
-- 50-69: Related category but the brand is not prominent.
-- 30-49: Off-topic or different brand featured.
-- 0-29: Broken, wrong, or completely unrelated.
-NOTE: A brand panel correctly linking to that brand's page is intended behavior. Do NOT flag as context_mismatch.
-
-CATEGORY panel:
-- 90-100: Destination is the correct category page.
-- 70-89: Closely related category.
-- 50-69: Loosely related.
-- 30-49: Different category entirely.
-- 0-29: Broken or completely unrelated.
-
-PRICE CHECK (only applies when price_shown is not null):
-If price_shown is not null, check whether that price appears on the destination. If the destination shows significantly higher prices and the panel price is nowhere to be found, flag price_mismatch.
-
-OFFER CHECK (only applies when offer_language is not null):
-If offer_language mentions a specific discount or promotion, check whether the destination reflects that promotion. If there is no evidence of the promotion on the destination, flag context_mismatch.
-
-ISSUE TYPES — only flag real problems a customer would encounter:
-- item_not_found: Specific featured product not on destination. PRODUCT panels only.
-- price_mismatch: Panel shows a specific price not found on destination. Only when price_shown is not null.
-- dead_link: Destination is a hard error page.
-- redirect: Destination redirects to something unrelated.
-- context_mismatch: Panel makes a specific promise the destination fundamentally fails to deliver.
-- none: No issues.
-
-Do NOT flag:
-- Brand panels linking to brand pages
-- Category panels linking to category pages  
-- Promotional landing pages that match the panel's offer
-- Page layout or navigation structure differences
-
-Respond in this exact JSON format only, no markdown:
-{
-  "score": <integer 0-100>,
-  "issues": [
-    { "type": "<price_mismatch|item_not_found|dead_link|redirect|context_mismatch|none>", "detail": "<concise, producer-actionable description>" }
-  ],
-  "reasoning": "<2-4 sentences in plain language a web producer can act on>"
-}
-
-If there are no issues: "issues": [{"type":"none","detail":"Panel promise fulfilled"}]`
+  const scoringPrompt = buildPass2UserMessage({
+    panelFacts,
+    outboundPageTitle,
+    httpStatus,
+    redirectCount,
+    outboundText,
+  })
 
   const scoringResponse = await anthropic.messages.create({
     model: 'claude-haiku-4-5-20251001',
@@ -494,8 +439,12 @@ If there are no issues: "issues": [{"type":"none","detail":"Panel promise fulfil
     ...baseResult,
     panelType: panelFacts.panel_type,
     featuredProduct: panelFacts.featured_product,
+    brandName: panelFacts.brand_name,
     priceShown: panelFacts.price_shown,
     offerLanguage: panelFacts.offer_language,
+    ctaText: panelFacts.cta_text,
+    destinationRelevanceKeywords: parsed.destination_relevance_keywords ?? null,
+    hasEmptyResults: outboundText.hasEmptyResults,
     isBotBlocked: false,
     redirectCount,
     productCountOnDestination: outboundText.productCount ?? null,
@@ -596,8 +545,12 @@ async function main() {
         category_folder: item.categoryFolder ?? null,
         panel_type: item.panelType ?? null,
         featured_product: item.featuredProduct ?? null,
+        brand_name: item.brandName ?? null,
         price_shown: item.priceShown ?? null,
         offer_language: item.offerLanguage ?? null,
+        cta_text: item.ctaText ?? null,
+        destination_relevance_keywords: item.destinationRelevanceKeywords ?? null,
+        has_empty_results: item.hasEmptyResults ?? false,
         is_bot_blocked: item.isBotBlocked ?? false,
         redirect_count: item.redirectCount ?? 0,
         product_count_on_destination: item.productCountOnDestination ?? null,

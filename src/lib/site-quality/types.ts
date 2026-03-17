@@ -47,11 +47,13 @@ export interface SiteQualityPanelRun {
 }
 
 export type SiteQualityPanelIssueType =
-  | 'price_mismatch'
   | 'item_not_found'
+  | 'price_mismatch'
+  | 'wrong_destination'
+  | 'weak_correlation'
+  | 'empty_destination'
   | 'dead_link'
   | 'redirect'
-  | 'context_mismatch'
   | 'bot_blocked'
   | 'none'
 
@@ -69,8 +71,12 @@ export interface SiteQualityPanelResult {
   source_page_url: string | null
   panel_type?: 'PRODUCT' | 'BRAND' | 'CATEGORY'
   featured_product?: string | null
+  brand_name?: string | null
   price_shown?: string | null
   offer_language?: string | null
+  cta_text?: string | null
+  destination_relevance_keywords?: string[] | null
+  has_empty_results?: boolean
   is_bot_blocked?: boolean
   redirect_count?: number
   product_count_on_destination?: number | null
