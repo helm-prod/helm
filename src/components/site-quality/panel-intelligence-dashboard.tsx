@@ -8,40 +8,231 @@ import type { ReportRecipient } from '@/lib/site-quality/report-recipients'
 import type { SiteQualityPanelResult, SiteQualityPanelRun } from '@/lib/site-quality/types'
 import type { UserRole } from '@/lib/types/database'
 
-const CARD = 'rounded-[24px] border border-[rgba(0,110,180,0.25)] bg-[rgba(0,65,115,0.45)]'
-const AOR_OPTIONS = ['All', 'Megan', 'Maddie', 'Daryl'] as const
-
-function formatTimestamp(value: string | null) {
-  if (!value) return 'No completed run yet'
-  const date = new Date(value)
-  if (!Number.isFinite(date.getTime())) return 'Unknown'
-  return date.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+type PanelResult = Omit<SiteQualityPanelResult, 'score' | 'panel_type'> & {
+  score: number | null
+  panel_type?: 'PRODUCT' | 'BRAND' | 'CATEGORY' | null
+  featured_product?: string | null
+  brand_name?: string | null
+  cta_text?: string | null
+  price_shown?: string | null
+  offer_language?: string | null
+  is_bot_blocked?: boolean
+  redirect_count?: number
+  product_count_on_destination?: number | null
+  is_out_of_stock?: boolean
+  has_empty_results?: boolean
+  source_page_url?: string | null
+  destination_relevance_keywords?: string[] | null
 }
 
-function scoreColor(score: number) {
-  if (score >= 80) return { text: 'text-blue-200', bar: 'bg-blue-300/80' }
-  if (score >= 50) return { text: 'text-indigo-200', bar: 'bg-indigo-300/80' }
-  return { text: 'text-red-200', bar: 'bg-red-300/80' }
-}
-
-function issueTone(type: string) {
-  const map: Record<string, string> = {
-    price_mismatch: 'bg-indigo-300/15 text-indigo-200',
-    item_not_found: 'bg-blue-400/15 text-blue-200',
-    dead_link: 'bg-slate-300/15 text-slate-200',
-    redirect: 'bg-indigo-200/15 text-indigo-100',
-    context_mismatch: 'bg-blue-300/15 text-blue-100',
-    none: 'bg-blue-300/10 text-blue-200',
-  }
-  return map[type] ?? 'bg-blue-300/10 text-blue-200'
-}
+type ActiveFilter =
+  | { kind: 'all' }
+  | { kind: 'page'; key: string }
+  | { kind: 'producer'; owner: string }
+  | { kind: 'quick'; key: 'action-needed' | 'bot-blocked' | 'assigned' | 'escalated' }
 
 function formatIssueType(type: string): string {
-  if (type === 'none') return 'No Issues'
-  return type
-    .split('_')
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ')
+  const labels: Record<string, string> = {
+    item_not_found: 'Item Not Found',
+    price_mismatch: 'Price Mismatch',
+    wrong_destination: 'Wrong Destination',
+    weak_correlation: 'Weak Correlation',
+    empty_destination: 'Empty Destination',
+    dead_link: 'Dead Link',
+    redirect: 'Redirect',
+    bot_blocked: 'Bot Blocked',
+    none: 'No Issues',
+  }
+  return labels[type] || type.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
+function issueColor(type: string): { bg: string; text: string; border: string } {
+  switch (type) {
+    case 'dead_link':
+    case 'wrong_destination':
+      return { bg: 'bg-red-500/10', text: 'text-red-300', border: 'border-red-500/25' }
+    case 'item_not_found':
+    case 'price_mismatch':
+    case 'empty_destination':
+      return { bg: 'bg-amber-500/10', text: 'text-amber-300', border: 'border-amber-500/25' }
+    case 'weak_correlation':
+      return { bg: 'bg-yellow-500/10', text: 'text-yellow-300', border: 'border-yellow-500/25' }
+    default:
+      return { bg: 'bg-slate-500/10', text: 'text-slate-400', border: 'border-slate-500/20' }
+  }
+}
+
+function scoreColor(score: number | null): string {
+  if (score === null) return 'text-slate-500'
+  if (score >= 80) return 'text-emerald-400'
+  if (score >= 50) return 'text-amber-400'
+  return 'text-red-400'
+}
+
+function pageHealthColor(panels: PanelResult[]): string {
+  const hasRed = panels.some((panel) => panel.issues?.some((issue) => ['wrong_destination', 'dead_link'].includes(issue.type)))
+  if (hasRed) return 'bg-red-400'
+  const hasAmber = panels.some((panel) => panel.issues?.some((issue) => ['empty_destination', 'weak_correlation', 'item_not_found', 'price_mismatch'].includes(issue.type)))
+  if (hasAmber) return 'bg-amber-400'
+  return 'bg-emerald-400'
+}
+
+function formatRunDate(value: string | null | undefined) {
+  if (!value) return 'Current run'
+  const date = new Date(value)
+  if (!Number.isFinite(date.getTime())) return 'Current run'
+  return date.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+}
+
+function formatPageLabel(sourcePageUrl: string | null | undefined, fallback: string) {
+  if (!sourcePageUrl) return fallback
+
+  try {
+    const url = new URL(sourcePageUrl)
+    if (url.pathname === '/' || url.pathname === '') return 'Homepage'
+
+    const parts = url.pathname.split('/').filter(Boolean)
+    const raw = parts[0] === 'browse' && parts[1] ? parts[1] : parts[0] || fallback
+    return raw
+      .split('-')
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(' ')
+  } catch {
+    return fallback
+  }
+}
+
+function getVisibleIssues(panel: PanelResult) {
+  return (panel.issues ?? []).filter((issue) => issue.type !== 'none')
+}
+
+function hasIssue(panel: PanelResult, types: string[]) {
+  return getVisibleIssues(panel).some((issue) => types.includes(issue.type))
+}
+
+function getPrimaryIssue(panel: PanelResult, preferredTypes?: string[]) {
+  const issues = getVisibleIssues(panel)
+  if (issues.length === 0) return null
+  if (!preferredTypes?.length) return issues[0]
+  return issues.find((issue) => preferredTypes.includes(issue.type)) ?? issues[0]
+}
+
+function formatDelta(value: number | null, positiveIsGood = true) {
+  if (value === null) return { label: '—', className: 'bg-slate-500/10 text-slate-400' }
+  if (value === 0) return { label: '—', className: 'bg-slate-500/10 text-slate-400' }
+
+  const improved = positiveIsGood ? value > 0 : value < 0
+  return {
+    label: `${value > 0 ? '+' : ''}${value}`,
+    className: improved ? 'bg-emerald-500/10 text-emerald-300' : 'bg-red-500/10 text-red-300',
+  }
+}
+
+function SparkBars({ values, tone }: { values: Array<number | null>; tone: 'emerald' | 'amber' }) {
+  if (values.length === 0 || values.every((value) => value === null)) {
+    return <div className="mt-3 h-6 text-[10px] text-slate-500">—</div>
+  }
+
+  const palette = tone === 'emerald'
+    ? ['bg-emerald-400/30', 'bg-emerald-400/40', 'bg-emerald-400/50', 'bg-emerald-400/60', 'bg-emerald-400/70', 'bg-emerald-400/90']
+    : ['bg-amber-400/30', 'bg-amber-400/40', 'bg-amber-400/50', 'bg-amber-400/60', 'bg-amber-400/70', 'bg-amber-400/90']
+
+  return (
+    <div className="mt-3 flex h-6 items-end gap-1">
+      {values.map((value, index) => {
+        const height = value === null ? 3 : Math.max(3, Math.round((value / 100) * 24))
+        return <div key={`${tone}-${index}`} className={`w-full rounded-t ${palette[Math.min(index, palette.length - 1)]}`} style={{ height }} />
+      })}
+    </div>
+  )
+}
+
+function SectionPlaceholder({ title, description }: { title: string; description: string }) {
+  return (
+    <div className="rounded-lg border border-dashed border-[rgba(71,85,105,0.3)] bg-[rgba(30,41,59,0.3)] p-5 text-center">
+      <div className="text-[11px] text-slate-500">{title}</div>
+      <div className="mt-1 text-[10px] text-slate-500 opacity-60">{description}</div>
+    </div>
+  )
+}
+
+function IssuePill({ type }: { type: string }) {
+  const color = issueColor(type)
+  return <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] ${color.bg} ${color.text} ${color.border}`}>{formatIssueType(type)}</span>
+}
+
+function TableSection({
+  title,
+  subtitle,
+  titleClassName,
+  rows,
+  preferredIssueTypes,
+  onSelect,
+}: {
+  title: string
+  subtitle: string
+  titleClassName: string
+  rows: PanelResult[]
+  preferredIssueTypes?: string[]
+  onSelect: (panel: PanelResult) => void
+}) {
+  return (
+    <section className="rounded-lg border border-[rgba(71,85,105,0.15)] bg-[#111827] p-3">
+      <div className="mb-2 flex items-baseline gap-2">
+        <h3 className={`text-xs font-medium ${titleClassName}`}>{title}</h3>
+        <span className="text-xs text-slate-500">{subtitle}</span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full border-collapse">
+          <thead>
+            <tr>
+              {['Panel', 'Page', 'Issue', 'Destination shows', 'Score', 'Δ'].map((heading) => (
+                <th key={heading} className="border-b border-[rgba(71,85,105,0.15)] px-2 py-1.5 text-left text-[10px] font-medium uppercase tracking-wider text-slate-500">
+                  {heading}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((panel) => {
+              const issue = getPrimaryIssue(panel, preferredIssueTypes)
+              return (
+                <tr key={panel.id} className="cursor-pointer transition-colors hover:bg-blue-500/[0.03]" onClick={() => onSelect(panel)}>
+                  <td className="border-b border-[rgba(71,85,105,0.15)] px-2 py-2 align-middle">
+                    <div className="text-[13px] text-slate-100">{panel.panel_name}</div>
+                    {(panel.featured_product || panel.offer_language) && (
+                      <div className="mt-0.5 text-[11px] text-slate-500">{panel.featured_product || panel.offer_language}</div>
+                    )}
+                  </td>
+                  <td className="border-b border-[rgba(71,85,105,0.15)] px-2 py-2 align-middle">
+                    <span className="rounded bg-[#1a2332] px-1.5 py-0.5 text-[10px] text-slate-500">{formatPageLabel(panel.source_page_url, panel.category_l1)}</span>
+                  </td>
+                  <td className="border-b border-[rgba(71,85,105,0.15)] px-2 py-2 align-middle">
+                    {issue ? <IssuePill type={issue.type} /> : <span className="text-[10px] text-slate-500">—</span>}
+                  </td>
+                  <td className="max-w-[200px] border-b border-[rgba(71,85,105,0.15)] px-2 py-2 align-middle">
+                    <div className="truncate text-[10px] italic text-slate-500">
+                      {panel.destination_relevance_keywords?.slice(0, 4).join(', ') || '—'}
+                    </div>
+                  </td>
+                  <td className={`border-b border-[rgba(71,85,105,0.15)] px-2 py-2 text-sm font-medium tabular-nums ${scoreColor(panel.score)}`}>
+                    {panel.score ?? '—'}
+                  </td>
+                  <td className="border-b border-[rgba(71,85,105,0.15)] px-2 py-2 text-[11px] text-slate-500">—</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  )
 }
 
 export function PanelIntelligenceDashboard({
@@ -56,20 +247,24 @@ export function PanelIntelligenceDashboard({
   userRole: UserRole
 }) {
   const [run, setRun] = useState(initialRun)
-  const [results, setResults] = useState(initialResults)
-  const [selectedAor, setSelectedAor] = useState<(typeof AOR_OPTIONS)[number]>('All')
-  const [selectedPanel, setSelectedPanel] = useState<SiteQualityPanelResult | null>(null)
+  const [results, setResults] = useState<PanelResult[]>(initialResults as PanelResult[])
+  const [selectedPanel, setSelectedPanel] = useState<PanelResult | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [running, setRunning] = useState(false)
   const [sending, setSending] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [runId, setRunId] = useState(initialRun?.id ?? null)
+  const [activeTab, setActiveTab] = useState<'panel-intelligence' | 'link-health' | 'page-overview'>('panel-intelligence')
+  const [search, setSearch] = useState('')
+  const [activeFilter, setActiveFilter] = useState<ActiveFilter>({ kind: 'all' })
+  const [passingSort, setPassingSort] = useState<'score' | 'page' | 'aor'>('score')
+  const [showAllPassing, setShowAllPassing] = useState(false)
 
   useEffect(() => {
     if (!runId || !running) return
 
     const timer = window.setInterval(async () => {
-      const query = new URLSearchParams({ runId, pageSize: '100' })
+      const query = new URLSearchParams({ runId, pageSize: '250' })
       const response = await fetch(`/api/site-quality/panel-results?${query.toString()}`)
       const data = await response.json()
       if (!response.ok) {
@@ -78,7 +273,7 @@ export function PanelIntelligenceDashboard({
         return
       }
       setRun(data.run)
-      setResults(data.results ?? [])
+      setResults((data.results ?? []) as PanelResult[])
       if (data.run?.status === 'complete' || data.run?.status === 'failed') {
         setRunning(false)
       }
@@ -87,29 +282,116 @@ export function PanelIntelligenceDashboard({
     return () => window.clearInterval(timer)
   }, [runId, running])
 
-  const filteredResults = useMemo(() => {
-    if (selectedAor === 'All') return results
-    return results.filter((item) => item.aor_owner === selectedAor)
-  }, [results, selectedAor])
+  const pageGroups = useMemo(() => {
+    const map = new Map<string, { key: string; label: string; panels: PanelResult[] }>()
 
-  const stats = useMemo(() => {
-    const avg = filteredResults.length > 0 ? filteredResults.reduce((sum, item) => sum + item.score, 0) / filteredResults.length : 0
-    const issues = filteredResults.reduce((sum, item) => sum + item.issues.filter((issue) => issue.type !== 'none').length, 0)
-    return {
-      panels: filteredResults.length,
-      avgScore: Math.round(avg),
-      issues,
-      passing: filteredResults.filter((item) => item.score >= 80).length,
+    for (const panel of results) {
+      const key = panel.source_page_url || panel.category_l1
+      const existing = map.get(key)
+      if (existing) {
+        existing.panels.push(panel)
+        continue
+      }
+      map.set(key, {
+        key,
+        label: formatPageLabel(panel.source_page_url, panel.category_l1),
+        panels: [panel],
+      })
     }
-  }, [filteredResults])
 
-  const byAor = useMemo(() => {
-    return AOR_OPTIONS.slice(1).map((owner) => {
-      const rows = results.filter((item) => item.aor_owner === owner)
-      const avg = rows.length > 0 ? Math.round(rows.reduce((sum, item) => sum + item.score, 0) / rows.length) : 0
-      return { owner, avg, issues: rows.reduce((sum, item) => sum + item.issues.filter((issue) => issue.type !== 'none').length, 0) }
-    })
+    return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label))
   }, [results])
+
+  const producerGroups = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const panel of results) {
+      counts.set(panel.aor_owner, (counts.get(panel.aor_owner) ?? 0) + 1)
+    }
+    return Array.from(counts.entries())
+      .map(([owner, count]) => ({ owner, count }))
+      .sort((a, b) => a.owner.localeCompare(b.owner))
+  }, [results])
+
+  const quickCounts = useMemo(() => {
+    return {
+      actionNeeded: results.filter((panel) => hasIssue(panel, ['wrong_destination', 'dead_link', 'empty_destination'])).length,
+      botBlocked: results.filter((panel) => panel.is_bot_blocked).length,
+    }
+  }, [results])
+
+  const filteredResults = useMemo(() => {
+    const normalizedSearch = search.trim().toLowerCase()
+
+    return results.filter((panel) => {
+      const passesFilter = (() => {
+        switch (activeFilter.kind) {
+          case 'all':
+            return true
+          case 'page':
+            return (panel.source_page_url || panel.category_l1) === activeFilter.key
+          case 'producer':
+            return panel.aor_owner === activeFilter.owner
+          case 'quick':
+            if (activeFilter.key === 'action-needed') return hasIssue(panel, ['wrong_destination', 'dead_link', 'empty_destination'])
+            if (activeFilter.key === 'bot-blocked') return Boolean(panel.is_bot_blocked)
+            return false
+        }
+      })()
+
+      if (!passesFilter) return false
+      if (!normalizedSearch) return true
+
+      const haystack = [
+        panel.panel_name,
+        panel.source_page_url || '',
+        panel.brand_name || '',
+        ...(panel.destination_relevance_keywords ?? []),
+      ]
+        .join(' ')
+        .toLowerCase()
+
+      return haystack.includes(normalizedSearch)
+    })
+  }, [activeFilter, results, search])
+
+  const scoredPanels = useMemo(() => filteredResults.filter((panel) => panel.score !== null), [filteredResults])
+
+  const avgScore = useMemo(() => {
+    if (scoredPanels.length === 0) return null
+    return Math.round(scoredPanels.reduce((sum, panel) => sum + (panel.score ?? 0), 0) / scoredPanels.length)
+  }, [scoredPanels])
+
+  const panelsWithIssues = useMemo(() => filteredResults.filter((panel) => getVisibleIssues(panel).length > 0), [filteredResults])
+
+  const actionNeededPanels = useMemo(
+    () => filteredResults.filter((panel) => hasIssue(panel, ['wrong_destination', 'dead_link', 'empty_destination'])),
+    [filteredResults]
+  )
+
+  const optimizationPanels = useMemo(
+    () => filteredResults.filter((panel) => hasIssue(panel, ['weak_correlation'])),
+    [filteredResults]
+  )
+
+  const botBlockedPanels = useMemo(() => filteredResults.filter((panel) => panel.is_bot_blocked), [filteredResults])
+
+  const passingPanels = useMemo(() => {
+    const rows = filteredResults.filter((panel) => !panel.is_bot_blocked && getVisibleIssues(panel).length === 0)
+    return [...rows].sort((a, b) => {
+      if (passingSort === 'page') return formatPageLabel(a.source_page_url, a.category_l1).localeCompare(formatPageLabel(b.source_page_url, b.category_l1))
+      if (passingSort === 'aor') return a.aor_owner.localeCompare(b.aor_owner)
+      return (b.score ?? -1) - (a.score ?? -1)
+    })
+  }, [filteredResults, passingSort])
+
+  const visiblePassing = showAllPassing ? passingPanels : passingPanels.slice(0, 8)
+
+  const avgDelta = formatDelta(null, true)
+  const issueDelta = formatDelta(null, false)
+  const sparkScores = avgScore === null ? [] : [avgScore]
+  const sparkIssues = panelsWithIssues.length === 0 ? [] : [Math.min(100, Math.round((panelsWithIssues.length / Math.max(filteredResults.length, 1)) * 100))]
+
+  const runOptions = run ? [{ id: run.id, label: formatRunDate(run.completed_at ?? run.created_at) }] : []
 
   async function handleRescore() {
     setRunning(true)
@@ -142,112 +424,321 @@ export function PanelIntelligenceDashboard({
     setMessage(response.ok ? 'Report sent' : data.error || 'Failed to send report')
   }
 
+  function renderTabPlaceholder(label: string) {
+    return (
+      <div className="rounded-lg border border-dashed border-[rgba(71,85,105,0.3)] bg-[#111827] p-10 text-center">
+        <div className="text-sm text-slate-100">{label}</div>
+        <div className="mt-2 text-xs text-slate-500">This tab is a placeholder for the next phase.</div>
+      </div>
+    )
+  }
+
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-        <div>
-          <h1 className="text-3xl font-semibold text-white">Panel Intelligence</h1>
-          <p className="mt-2 text-sm text-blue-100/65">L1 panel {'->'} outbound page quality scoring</p>
+    <div className="overflow-hidden rounded-xl border border-[rgba(71,85,105,0.15)] bg-[#0a0f1a] text-slate-100">
+      <div className="grid min-h-[840px] grid-cols-[220px_1fr] grid-rows-[auto_1fr]">
+        <div className="col-span-2 flex items-center gap-4 border-b border-[rgba(71,85,105,0.3)] bg-[#0a0f1a] px-5 py-3">
+          <div className="text-sm font-medium text-slate-100">Site quality</div>
+          <div className="h-5 w-px bg-[rgba(71,85,105,0.3)]" />
+          <div className="flex items-end gap-5 text-sm">
+            {[
+              ['panel-intelligence', 'Panel intelligence'],
+              ['link-health', 'Link health'],
+              ['page-overview', 'Page overview'],
+            ].map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setActiveTab(key as 'panel-intelligence' | 'link-health' | 'page-overview')}
+                className={`border-b-2 pb-2 ${
+                  activeTab === key ? 'border-blue-400 text-blue-400' : 'border-transparent text-slate-500 hover:text-slate-400'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="ml-auto flex items-center gap-3">
+            <div className="flex items-center rounded-md border border-[rgba(71,85,105,0.15)] bg-[#1a2332] px-3 py-1.5 text-xs text-slate-400">
+              <span className="mr-2 text-slate-500">⌕</span>
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search panels, pages, brands"
+                className="w-60 bg-transparent text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none"
+              />
+            </div>
+            <select
+              value={run?.id ?? ''}
+              onChange={(event) => setRunId(event.target.value || null)}
+              className="rounded border border-[rgba(71,85,105,0.15)] bg-[#1a2332] px-2 py-1 text-xs text-slate-400"
+            >
+              {runOptions.length === 0 ? <option value="">No runs</option> : runOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+            </select>
+          </div>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="text-right text-sm text-blue-100/65">Last scored: {formatTimestamp(run?.completed_at ?? run?.created_at ?? null)}</div>
-          {userRole === 'admin' && (
-            <button onClick={handleRescore} disabled={running} className="inline-flex items-center gap-2 rounded-full bg-blue-300 px-4 py-2 text-sm font-medium text-[#001f3a] disabled:opacity-60">
-              <RefreshCw className={`h-4 w-4 ${running ? 'animate-spin' : ''}`} />
-              {running ? 'Scoring...' : 'Re-score now'}
+
+        <aside className="overflow-y-auto border-r border-[rgba(71,85,105,0.3)] bg-[#111827] py-3">
+          <div className="px-3 pb-1.5 text-[10px] font-medium uppercase tracking-wider text-slate-500">Pages</div>
+          <div className="space-y-1 px-2">
+            <button
+              type="button"
+              onClick={() => setActiveFilter({ kind: 'all' })}
+              className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${
+                activeFilter.kind === 'all' ? 'bg-blue-500/10 text-blue-400' : 'text-slate-400 hover:bg-white/5'
+              }`}
+            >
+              <span className="h-2 w-2 rounded-full bg-blue-400" />
+              <span className="flex-1">All pages</span>
+              <span className="rounded bg-[#1a2332] px-1.5 py-0.5 text-[10px] text-slate-500">{results.length}</span>
             </button>
-          )}
-        </div>
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-4">
-        {[
-          ['Panels scored', stats.panels],
-          ['Avg score', stats.avgScore],
-          ['Issues flagged', stats.issues],
-          ['Passing (>=80)', stats.passing],
-        ].map(([label, value]) => (
-          <div key={label} className={`${CARD} p-5`}>
-            <p className="text-xs uppercase tracking-[0.24em] text-blue-100/55">{label}</p>
-            <p className="mt-3 text-3xl font-semibold text-white">{value}</p>
-          </div>
-        ))}
-      </div>
-
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.8fr)]">
-        <section className={`${CARD} p-5`}>
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <h2 className="text-lg font-semibold text-white">Scheduled run</h2>
-              <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-blue-100/70"><span className="h-2 w-2 rounded-full bg-blue-300" />Monday 8:30 AM EST</div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {AOR_OPTIONS.map((option) => (
-                <button key={option} onClick={() => setSelectedAor(option)} className={`rounded-full px-3 py-1.5 text-xs ${selectedAor === option ? 'bg-blue-300 text-[#001f3a]' : 'bg-white/5 text-blue-100/70'}`}>
-                  {option}
-                </button>
-              ))}
-            </div>
+            {pageGroups.map((group) => (
+              <button
+                key={group.key}
+                type="button"
+                onClick={() => setActiveFilter({ kind: 'page', key: group.key })}
+                className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${
+                  activeFilter.kind === 'page' && activeFilter.key === group.key ? 'bg-blue-500/10 text-blue-400' : 'text-slate-400 hover:bg-white/5'
+                }`}
+              >
+                <span className={`h-2 w-2 rounded-full ${pageHealthColor(group.panels)}`} />
+                <span className="flex-1 truncate">{group.label}</span>
+                <span className="rounded bg-[#1a2332] px-1.5 py-0.5 text-[10px] text-slate-500">{group.panels.length}</span>
+              </button>
+            ))}
           </div>
 
-          <div className="mt-5 space-y-3">
-            {filteredResults.map((panel) => {
-              const tone = scoreColor(panel.score)
-              return (
-                <button key={panel.id} onClick={() => { setSelectedPanel(panel); setDrawerOpen(true) }} className="w-full rounded-2xl border border-white/10 bg-[rgba(0,20,40,0.35)] p-4 text-left transition hover:border-blue-300/30">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="text-base font-medium text-white">{panel.panel_name}</h3>
-                        <span className="rounded-full bg-indigo-300/15 px-2.5 py-1 text-xs text-indigo-200">{panel.aor_owner}</span>
-                      </div>
-                      <p className="mt-2 text-xs uppercase tracking-[0.2em] text-blue-100/50">{panel.panel_id} · {panel.ad_week || 'No ad week'} · {panel.category_l1}</p>
-                    </div>
-                    <div className={`text-2xl font-semibold ${tone.text}`}>{panel.score}</div>
-                  </div>
-                  <div className="mt-4 h-[3px] rounded-full bg-white/10"><div className={`h-[3px] rounded-full ${tone.bar}`} style={{ width: `${Math.max(4, panel.score)}%` }} /></div>
-                    <div className="mt-4 flex flex-wrap gap-2">
-                    {panel.issues.map((issue, index) => (
-                      <span key={`${issue.type}-${index}`} className={`rounded-full px-2.5 py-1 text-xs ${issueTone(issue.type)}`}>{formatIssueType(issue.type)}</span>
-                    ))}
-                  </div>
-                </button>
-              )
-            })}
-            {filteredResults.length === 0 && (
-              <div className="rounded-2xl border border-white/10 bg-white/5 px-6 py-12 text-center">
-                <p className="text-base font-medium text-white">No panel scores yet</p>
-                <p className="mt-2 text-sm text-blue-100/60">
-                  {running ? 'Scoring in progress — results will appear here shortly.' : 'Use the Re-score now button to run your first scoring pass.'}
-                </p>
-              </div>
-            )}
+          <div className="px-3 pb-1.5 pt-5 text-[10px] font-medium uppercase tracking-wider text-slate-500">Producers</div>
+          <div className="space-y-1 px-2">
+            {producerGroups.map((group) => (
+              <button
+                key={group.owner}
+                type="button"
+                onClick={() => setActiveFilter({ kind: 'producer', owner: group.owner })}
+                className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${
+                  activeFilter.kind === 'producer' && activeFilter.owner === group.owner ? 'bg-blue-500/10 text-blue-400' : 'text-slate-400 hover:bg-white/5'
+                }`}
+              >
+                <span className="h-2 w-2 rounded-full bg-violet-400" />
+                <span className="flex-1 truncate">{group.owner}</span>
+                <span className="rounded bg-[#1a2332] px-1.5 py-0.5 text-[10px] text-slate-500">{group.count}</span>
+              </button>
+            ))}
           </div>
-        </section>
 
-        <div className="space-y-6">
-          <section className={`${CARD} p-5`}>
-            <h2 className="text-lg font-semibold text-white">Score distribution by AOR</h2>
-            <div className="mt-4 space-y-3">
-              {byAor.map((row) => (
-                <div key={row.owner} className="rounded-2xl bg-white/5 px-4 py-3">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-white">{row.owner}</span>
-                    <span className="text-blue-200">Avg {row.avg}</span>
-                  </div>
-                  <div className="mt-2 text-xs text-blue-100/65">{row.issues} issues flagged</div>
+          <div className="px-3 pb-1.5 pt-5 text-[10px] font-medium uppercase tracking-wider text-slate-500">Quick filters</div>
+          <div className="space-y-1 px-2">
+            {[
+              ['action-needed', 'Action needed', 'bg-red-400', quickCounts.actionNeeded],
+              ['bot-blocked', 'Bot blocked', 'bg-amber-400', quickCounts.botBlocked],
+              ['assigned', 'Assigned to me', 'bg-blue-400', 0],
+              ['escalated', 'Escalated', 'bg-yellow-400', 0],
+            ].map(([key, label, dot, count]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setActiveFilter(key === 'assigned' || key === 'escalated' ? { kind: 'quick', key: key as 'assigned' | 'escalated' } : { kind: 'quick', key: key as 'action-needed' | 'bot-blocked' })}
+                className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${
+                  activeFilter.kind === 'quick' && activeFilter.key === key ? 'bg-blue-500/10 text-blue-400' : 'text-slate-400 hover:bg-white/5'
+                }`}
+              >
+                <span className={`h-2 w-2 rounded-full ${dot}`} />
+                <span className="flex-1 truncate">{label}</span>
+                <span className="rounded bg-[#1a2332] px-1.5 py-0.5 text-[10px] text-slate-500">{count}</span>
+              </button>
+            ))}
+          </div>
+        </aside>
+
+        <main className="space-y-4 overflow-y-auto bg-[#0a0f1a] p-4">
+          {activeTab !== 'panel-intelligence' ? (
+            renderTabPlaceholder(activeTab === 'link-health' ? 'Link health' : 'Page overview')
+          ) : (
+            <>
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[rgba(71,85,105,0.15)] bg-[#111827] px-3 py-2">
+                <div>
+                  <div className="text-xs text-slate-400">Current run</div>
+                  <div className="mt-0.5 text-sm text-slate-100">{formatRunDate(run?.completed_at ?? run?.created_at)}</div>
                 </div>
-              ))}
-            </div>
-            <button onClick={handleSendReport} disabled={sending || !run?.id} className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-full bg-indigo-300 px-4 py-3 text-sm font-medium text-[#001f3a] disabled:opacity-60">
-              <Send className="h-4 w-4" />
-              {sending ? 'Sending...' : 'Generate & send report'}
-            </button>
-            <p className="mt-3 min-h-5 text-sm text-blue-100/70">{message ?? ' '}</p>
-          </section>
+                <div className="min-h-5 text-xs text-slate-500">{message ?? ' '}</div>
+                <div className="flex items-center gap-2">
+                  {userRole === 'admin' && (
+                    <button
+                      type="button"
+                      onClick={handleRescore}
+                      disabled={running}
+                      className="inline-flex items-center gap-2 rounded-md border border-blue-500/25 bg-blue-500/10 px-3 py-1.5 text-xs text-blue-300 disabled:opacity-60"
+                    >
+                      <RefreshCw className={`h-3.5 w-3.5 ${running ? 'animate-spin' : ''}`} />
+                      {running ? 'Scoring...' : 'Re-score'}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleSendReport}
+                    disabled={sending || !run?.id}
+                    className="inline-flex items-center gap-2 rounded-md border border-[rgba(71,85,105,0.15)] bg-[#1a2332] px-3 py-1.5 text-xs text-slate-300 disabled:opacity-60"
+                  >
+                    <Send className="h-3.5 w-3.5" />
+                    {sending ? 'Sending...' : 'Send report'}
+                  </button>
+                </div>
+              </div>
 
-          {userRole === 'admin' && <ReportRecipientsManager initialRecipients={initialRecipients} />}
-        </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="rounded-lg border border-[rgba(71,85,105,0.15)] bg-[#111827] p-3">
+                  <div className="text-[11px] text-slate-400">Avg panel score</div>
+                  <div className={`mt-2 text-xl font-medium ${scoreColor(avgScore)}`}>{avgScore ?? '—'}</div>
+                  <div className={`mt-2 inline-flex rounded px-1.5 py-0.5 text-xs ${avgDelta.className}`}>{avgDelta.label}</div>
+                  <SparkBars values={sparkScores} tone="emerald" />
+                </div>
+                <div className="rounded-lg border border-[rgba(71,85,105,0.15)] bg-[#111827] p-3">
+                  <div className="text-[11px] text-slate-400">Panels with issues</div>
+                  <div className="mt-2 text-xl font-medium text-amber-400">{panelsWithIssues.length}</div>
+                  <div className={`mt-2 inline-flex rounded px-1.5 py-0.5 text-xs ${issueDelta.className}`}>{issueDelta.label}</div>
+                  <SparkBars values={sparkIssues} tone="amber" />
+                </div>
+                <div className="rounded-lg border border-[rgba(71,85,105,0.15)] bg-[#111827] p-3">
+                  <div className="text-[11px] text-slate-400">At-risk destination revenue</div>
+                  <div className="mt-2 text-xl font-medium text-slate-500">—</div>
+                  <div className="mt-2 inline-flex rounded bg-slate-500/10 px-1.5 py-0.5 text-xs text-slate-400">GA4 pending</div>
+                  <div className="mt-2 text-[10px] text-slate-500 opacity-60">Revenue data from GA4 will appear here once integrated</div>
+                </div>
+              </div>
+
+              {actionNeededPanels.length > 0 && (
+                <TableSection
+                  title="Action needed"
+                  subtitle="— production errors and empty destinations"
+                  titleClassName="text-red-400"
+                  rows={actionNeededPanels}
+                  preferredIssueTypes={['wrong_destination', 'dead_link', 'empty_destination']}
+                  onSelect={(panel) => {
+                    setSelectedPanel(panel)
+                    setDrawerOpen(true)
+                  }}
+                />
+              )}
+
+              {optimizationPanels.length > 0 && (
+                <TableSection
+                  title="Optimization opportunities"
+                  subtitle="— destination doesn't fully deliver on panel promise"
+                  titleClassName="text-yellow-400"
+                  rows={optimizationPanels}
+                  preferredIssueTypes={['weak_correlation']}
+                  onSelect={(panel) => {
+                    setSelectedPanel(panel)
+                    setDrawerOpen(true)
+                  }}
+                />
+              )}
+
+              {botBlockedPanels.length > 0 && (
+                <section className="rounded-lg border border-[rgba(71,85,105,0.15)] bg-[#111827] p-3">
+                  <div className="mb-2 flex items-baseline gap-2">
+                    <h3 className="text-xs font-medium text-amber-400">Bot blocked</h3>
+                    <span className="text-xs text-slate-500">— manual verification needed</span>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse">
+                      <thead>
+                        <tr>
+                          {['Panel', 'Page', 'Status'].map((heading) => (
+                            <th key={heading} className="border-b border-[rgba(71,85,105,0.15)] px-2 py-1.5 text-left text-[10px] font-medium uppercase tracking-wider text-slate-500">
+                              {heading}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {botBlockedPanels.map((panel) => (
+                          <tr key={panel.id} className="cursor-pointer transition-colors hover:bg-blue-500/[0.03]" onClick={() => { setSelectedPanel(panel); setDrawerOpen(true) }}>
+                            <td className="border-b border-[rgba(71,85,105,0.15)] px-2 py-2 text-[13px] text-slate-100">{panel.panel_name}</td>
+                            <td className="border-b border-[rgba(71,85,105,0.15)] px-2 py-2">
+                              <span className="rounded bg-[#1a2332] px-1.5 py-0.5 text-[10px] text-slate-500">{formatPageLabel(panel.source_page_url, panel.category_l1)}</span>
+                            </td>
+                            <td className="border-b border-[rgba(71,85,105,0.15)] px-2 py-2 text-[11px] text-amber-300">⚠ Verify manually</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              )}
+
+              <section className="rounded-lg border border-[rgba(71,85,105,0.15)] bg-[#111827] p-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <div className="flex items-baseline gap-2">
+                    <h3 className="text-xs font-medium text-slate-400">Passing panels</h3>
+                    <span className="text-xs text-slate-500">{passingPanels.length}</span>
+                  </div>
+                  <select
+                    value={passingSort}
+                    onChange={(event) => setPassingSort(event.target.value as 'score' | 'page' | 'aor')}
+                    className="rounded border border-[rgba(71,85,105,0.15)] bg-[#1a2332] px-2 py-1 text-xs text-slate-400"
+                  >
+                    <option value="score">Sort by score</option>
+                    <option value="page">Sort by page</option>
+                    <option value="aor">Sort by AOR</option>
+                  </select>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse">
+                    <thead>
+                      <tr>
+                        {['Panel', 'Page', 'Destination shows', 'Score'].map((heading) => (
+                          <th key={heading} className="border-b border-[rgba(71,85,105,0.15)] px-2 py-1.5 text-left text-[10px] font-medium uppercase tracking-wider text-slate-500">
+                            {heading}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visiblePassing.map((panel) => (
+                        <tr key={panel.id} className="cursor-pointer transition-colors hover:bg-blue-500/[0.03]" onClick={() => { setSelectedPanel(panel); setDrawerOpen(true) }}>
+                          <td className="border-b border-[rgba(71,85,105,0.15)] px-2 py-2 text-[13px] text-slate-100">{panel.panel_name}</td>
+                          <td className="border-b border-[rgba(71,85,105,0.15)] px-2 py-2">
+                            <span className="rounded bg-[#1a2332] px-1.5 py-0.5 text-[10px] text-slate-500">{formatPageLabel(panel.source_page_url, panel.category_l1)}</span>
+                          </td>
+                          <td className="max-w-[220px] border-b border-[rgba(71,85,105,0.15)] px-2 py-2">
+                            <div className="truncate text-[10px] italic text-slate-500">
+                              {panel.destination_relevance_keywords?.slice(0, 4).join(', ') || 'Aligned destination'}
+                            </div>
+                          </td>
+                          <td className={`border-b border-[rgba(71,85,105,0.15)] px-2 py-2 text-sm font-medium tabular-nums ${scoreColor(panel.score)}`}>
+                            {panel.score ?? '—'}
+                          </td>
+                        </tr>
+                      ))}
+                      {passingPanels.length > visiblePassing.length && (
+                        <tr>
+                          <td colSpan={4} className="px-2 py-3 text-center text-xs text-slate-500">
+                            <button type="button" onClick={() => setShowAllPassing(true)} className="hover:text-slate-300">
+                              {passingPanels.length - visiblePassing.length} more passing panels...
+                            </button>
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <SectionPlaceholder
+                  title="Page-level triage"
+                  description="AI pre-scan identifies all marketing zones per page — catches panels the scraper misses"
+                />
+                <SectionPlaceholder
+                  title="Review activity"
+                  description="Assigned reviews, suppressed panels, comments, and escalation history will appear here"
+                />
+              </div>
+
+              {userRole === 'admin' && <ReportRecipientsManager initialRecipients={initialRecipients} />}
+            </>
+          )}
+        </main>
       </div>
 
       <PanelDetailDrawer panel={selectedPanel} open={drawerOpen} onClose={() => setDrawerOpen(false)} />
