@@ -36,6 +36,14 @@ function issueTone(type: string) {
   return map[type] ?? 'bg-blue-300/10 text-blue-200'
 }
 
+function formatIssueType(type: string): string {
+  if (type === 'none') return 'No Issues'
+  return type
+    .split('_')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ')
+}
+
 export function PanelIntelligenceDashboard({
   initialRun,
   initialResults,
@@ -198,9 +206,9 @@ export function PanelIntelligenceDashboard({
                     <div className={`text-2xl font-semibold ${tone.text}`}>{panel.score}</div>
                   </div>
                   <div className="mt-4 h-[3px] rounded-full bg-white/10"><div className={`h-[3px] rounded-full ${tone.bar}`} style={{ width: `${Math.max(4, panel.score)}%` }} /></div>
-                  <div className="mt-4 flex flex-wrap gap-2">
+                    <div className="mt-4 flex flex-wrap gap-2">
                     {panel.issues.map((issue, index) => (
-                      <span key={`${issue.type}-${index}`} className={`rounded-full px-2.5 py-1 text-xs ${issueTone(issue.type)}`}>{issue.type === 'none' ? 'No issues' : issue.type}</span>
+                      <span key={`${issue.type}-${index}`} className={`rounded-full px-2.5 py-1 text-xs ${issueTone(issue.type)}`}>{formatIssueType(issue.type)}</span>
                     ))}
                   </div>
                 </button>

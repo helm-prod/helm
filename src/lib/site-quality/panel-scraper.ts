@@ -112,7 +112,7 @@ export async function scrapePanels(page: Page, url: string, label: string): Prom
     return {
       pageUrl: url,
       pageLabel: label,
-      panels,
+      panels: panels.filter((panel) => panel.outboundHref !== null && panel.outboundHref !== undefined && panel.outboundHref !== ''),
       scrapedAt,
     }
   } catch (error) {

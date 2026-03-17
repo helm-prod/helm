@@ -57,6 +57,7 @@ export interface SiteQualityPanelResult {
   panel_id: string
   panel_name: string
   category_l1: string
+  source_page_url: string | null
   outbound_url: string
   aor_owner: string
   ad_week: number | null

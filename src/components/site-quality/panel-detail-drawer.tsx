@@ -9,6 +9,14 @@ function scoreTone(score: number) {
   return { text: '#fca5a5', fill: 'bg-red-300/80' }
 }
 
+function formatIssueType(type: string): string {
+  if (type === 'none') return 'No Issues'
+  return type
+    .split('_')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ')
+}
+
 export function PanelDetailDrawer({
   panel,
   open,
@@ -30,20 +38,24 @@ export function PanelDetailDrawer({
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [open, onClose])
 
-  if (!panel) return null
+  if (!open || !panel) return null
 
   const tone = scoreTone(panel.score)
 
   return (
     <div
-      className={`fixed inset-0 z-50 transition-opacity ${open ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'}`}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
       aria-hidden={!open}
+      onClick={onClose}
     >
-      <button className="absolute inset-0 bg-[rgba(0,10,25,0.6)]" onClick={onClose} aria-label="Close drawer" />
-      <aside
-        className={`absolute right-0 top-0 h-full w-full max-w-[480px] border-l border-[rgba(0,110,180,0.25)] bg-[#001f3a] p-6 transition-transform duration-200 ease-out ${open ? 'translate-x-0' : 'translate-x-full'}`}
+      <div
+        className="relative max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-[rgba(0,110,180,0.35)] bg-[#001f3a] shadow-2xl mx-4"
+        onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex h-full flex-col">
+        <button className="absolute right-4 top-4 text-blue-100/70 transition hover:text-white" onClick={onClose} aria-label="Close modal">
+          Close
+        </button>
+        <div className="flex h-full flex-col p-6">
           <div className="flex items-start justify-between gap-4">
             <div>
               <p className="text-xs uppercase tracking-[0.24em] text-blue-200/70">{panel.aor_owner}</p>
@@ -71,6 +83,21 @@ export function PanelDetailDrawer({
             </section>
 
             <section className="rounded-2xl border border-[rgba(0,110,180,0.25)] bg-[rgba(0,65,115,0.45)] p-4">
+              <h3 className="text-sm font-medium text-white">Found on</h3>
+              {panel.source_page_url ? (
+                <p className="mt-3 text-sm text-blue-100/70">
+                  <span>{panel.category_l1}</span>
+                  <span> {'—'} </span>
+                  <a href={panel.source_page_url} target="_blank" rel="noreferrer" className="break-all text-blue-300">
+                    {panel.source_page_url}
+                  </a>
+                </p>
+              ) : (
+                <p className="mt-3 text-sm text-blue-100/70">{panel.category_l1}</p>
+              )}
+            </section>
+
+            <section className="rounded-2xl border border-[rgba(0,110,180,0.25)] bg-[rgba(0,65,115,0.45)] p-4">
               <h3 className="text-sm font-medium text-white">Destination</h3>
               <a href={panel.outbound_url} target="_blank" rel="noreferrer" className="mt-3 block break-all text-sm text-blue-300">
                 {panel.outbound_url}
@@ -83,7 +110,7 @@ export function PanelDetailDrawer({
               <div className="mt-3 space-y-2">
                 {panel.issues.map((issue, index) => (
                   <div key={`${issue.type}-${index}`} className="rounded-xl bg-white/5 px-3 py-2 text-sm text-blue-100/80">
-                    <div className="font-medium text-white">{issue.type}</div>
+                    <div className="font-medium text-white">{formatIssueType(issue.type)}</div>
                     <div className="mt-1 text-[13px] leading-6">{issue.detail}</div>
                   </div>
                 ))}
@@ -104,7 +131,7 @@ export function PanelDetailDrawer({
             </a>
           </div>
         </div>
-      </aside>
+      </div>
     </div>
   )
 }
