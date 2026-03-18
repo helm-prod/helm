@@ -2,7 +2,10 @@ import { createClient } from '@supabase/supabase-js'
 import Anthropic from '@anthropic-ai/sdk'
 import playwright, { type Response } from 'playwright'
 import { createHash } from 'crypto'
-import { L1_PAGES } from '../src/config/l1-pages'
+import { L1_PAGES, type PageConfig } from '../src/config/l1-pages'
+import { scrapeNavigation } from '../src/lib/site-quality/nav-scraper'
+import { fetchDestinationMetrics } from '../src/lib/site-quality/destination-metrics'
+import { triagePage } from '../src/lib/site-quality/page-triage'
 import { buildPass1UserMessage, buildPass2UserMessage, type PanelFacts } from '../src/lib/site-quality/panel-prompts'
 import { scrapePanels } from '../src/lib/site-quality/panel-scraper'
 
@@ -12,6 +15,9 @@ const supabase = createClient(
 )
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+const MAX_DEPTH = Number(process.env.PANEL_SCORE_MAX_DEPTH || 2)
+const MAX_PANELS_PER_PAGE = Number(process.env.PANEL_SCORE_MAX_PANELS_PER_PAGE || 20)
+const MAX_TOTAL_PANELS = Number(process.env.PANEL_SCORE_MAX_TOTAL_PANELS || 300)
 
 type PanelIssueType =
   | 'item_not_found'
@@ -39,7 +45,9 @@ interface ScoredPanelResult {
   sourcePageUrl: string
   outboundUrl: string
   panelImageUrl: string
-  aorOwner: string
+  aorOwner: string | null
+  pageDepth: number
+  parentPageLabel?: string | null
   adWeek?: number
   adYear?: number
   slot?: string
@@ -64,6 +72,19 @@ interface ScoredPanelResult {
   outboundPageTitle: string
 }
 
+interface PreviousPanelResult {
+  score: number | null
+  issues: Array<{ type: PanelIssueType; detail: string }> | null
+  ai_reasoning: string | null
+  panel_type: 'PRODUCT' | 'BRAND' | 'CATEGORY' | null
+  featured_product: string | null
+  brand_name: string | null
+  price_shown: string | null
+  offer_language: string | null
+  cta_text: string | null
+  destination_relevance_keywords: string[] | null
+}
+
 function computePanelFingerprint(panelImageUrl: string, outboundUrl: string): string {
   const input = `${panelImageUrl}::${outboundUrl}`.toLowerCase().trim()
   return createHash('sha256').update(input).digest('hex').slice(0, 16)
@@ -77,6 +98,48 @@ function normalizeMediaType(value: string): 'image/jpeg' | 'image/png' | 'image/
 function toTitleCase(value: string | undefined) {
   if (!value) return 'unassigned'
   return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase()
+}
+
+function pageKey(url: string) {
+  const nCode = url.match(/N-\d+/i)?.[0]?.toUpperCase()
+  if (nCode) return nCode
+
+  try {
+    const parsed = new URL(url)
+    const normalizedPath = parsed.pathname.replace(/\/+$/, '') || '/'
+    return `${parsed.origin}${normalizedPath}${parsed.search}`
+  } catch {
+    return url.trim()
+  }
+}
+
+function mergePageConfigs(basePages: PageConfig[], discoveredPages: PageConfig[]) {
+  const merged = new Map<string, PageConfig>()
+
+  for (const page of discoveredPages) {
+    merged.set(pageKey(page.url), page)
+  }
+
+  for (const page of basePages) {
+    merged.set(pageKey(page.url), page)
+  }
+
+  const labelMap = new Map<string, PageConfig>()
+  for (const page of Array.from(merged.values())) labelMap.set(page.label, page)
+
+  return Array.from(merged.values()).map((page) => {
+    if (page.aorOwner) return page
+
+    let parentLabel = page.parentLabel
+    while (parentLabel) {
+      const parent = labelMap.get(parentLabel)
+      if (!parent) break
+      if (parent.aorOwner) return { ...page, aorOwner: parent.aorOwner }
+      parentLabel = parent.parentLabel
+    }
+
+    return page
+  })
 }
 
 function defaultPanelFacts(): PanelFacts {
@@ -125,7 +188,9 @@ function buildBaseResult(panel: {
   sourcePageUrl: string
   outboundUrl: string
   panelImageUrl: string
-  aorOwner: string
+  aorOwner: string | null
+  pageDepth: number
+  parentPageLabel?: string | null
   adWeek?: number
   adYear?: number
   slot?: string
@@ -159,6 +224,31 @@ function buildPanelFailureResult(
     score: null,
     issues: [],
     aiReasoning: reasoning,
+    outboundPageTitle: '',
+  }
+}
+
+function buildSuppressedResult(
+  panel: Parameters<typeof buildBaseResult>[0],
+  previousResult: PreviousPanelResult | null
+): ScoredPanelResult {
+  return {
+    ...buildBaseResult(panel),
+    panelType: previousResult?.panel_type ?? undefined,
+    featuredProduct: previousResult?.featured_product ?? null,
+    brandName: previousResult?.brand_name ?? null,
+    priceShown: previousResult?.price_shown ?? null,
+    offerLanguage: previousResult?.offer_language ?? null,
+    ctaText: previousResult?.cta_text ?? null,
+    destinationRelevanceKeywords: previousResult?.destination_relevance_keywords ?? null,
+    hasEmptyResults: false,
+    isBotBlocked: false,
+    redirectCount: 0,
+    productCountOnDestination: null,
+    isOutOfStock: false,
+    score: previousResult?.score ?? null,
+    issues: previousResult?.issues ?? [{ type: 'none', detail: 'Scoring suppressed — carried forward from previous run' }],
+    aiReasoning: previousResult?.ai_reasoning ?? 'Scoring suppressed by admin',
     outboundPageTitle: '',
   }
 }
@@ -267,7 +357,9 @@ async function scorePanelWithPage(
     sourcePageUrl: string
     outboundUrl: string
     panelImageUrl: string
-    aorOwner: string
+    aorOwner: string | null
+    pageDepth: number
+    parentPageLabel?: string | null
     adWeek?: number
     adYear?: number
     slot?: string
@@ -572,31 +664,127 @@ async function main() {
 
   try {
     const results: ScoredPanelResult[] = []
+    const { data: suppressions, error: suppressionsError } = await supabase
+      .from('panel_reviews')
+      .select('panel_fingerprint, suppress_scoring_until')
+      .eq('status', 'suppressed')
+      .gt('suppress_scoring_until', new Date().toISOString())
 
-    for (const l1Page of L1_PAGES) {
-      console.log(`Scraping ${l1Page.label}...`)
-      const scrapeResult = await scrapePanels(page, l1Page.url, l1Page.label)
+    if (suppressionsError) {
+      throw new Error(`Failed to load suppressions: ${suppressionsError.message}`)
+    }
+
+    const suppressedFingerprints = new Set((suppressions || []).map((suppression) => suppression.panel_fingerprint))
+    console.log(`${suppressedFingerprints.size} panels suppressed — will carry forward previous scores`)
+    const discoveredPages = await scrapeNavigation(page)
+    const pages = mergePageConfigs(L1_PAGES, discoveredPages)
+      .filter((pageConfig) => pageConfig.depth <= MAX_DEPTH)
+      .sort((a, b) => {
+        if (a.depth !== b.depth) return a.depth - b.depth
+        return a.label.localeCompare(b.label)
+      })
+    const depthCounts = pages.reduce((counts, pageConfig) => {
+      counts[pageConfig.depth] = (counts[pageConfig.depth] ?? 0) + 1
+      return counts
+    }, {} as Record<number, number>)
+    console.log(`Scoring ${pages.length} pages (${depthCounts[1] ?? 0} L1, ${depthCounts[2] ?? 0} L2, ${depthCounts[3] ?? 0} L3)`)
+
+    let totalPanelsProcessed = 0
+
+    pageLoop:
+    for (const pageConfig of pages) {
+      if (totalPanelsProcessed >= MAX_TOTAL_PANELS) {
+        console.warn(`Reached total panel limit of ${MAX_TOTAL_PANELS}; skipping remaining pages and triage`)
+        break
+      }
+
+      console.log(`Scraping ${pageConfig.label}...`)
+      const scrapeResult = await scrapePanels(page, pageConfig.url, pageConfig.label)
       const panels = adWeek
         ? scrapeResult.panels.filter((p) => p.adWeek === adWeek)
         : scrapeResult.panels
+      const limitedPanels = panels.slice(0, MAX_PANELS_PER_PAGE)
+      const isHomepage = pageConfig.depth === 0 || pageConfig.url === 'https://www.mynavyexchange.com'
 
-      for (let i = 0; i < panels.length; i += 1) {
-        const panel = panels[i]
+      if (limitedPanels.length > 0 || isHomepage) {
+        const fullPageScreenshot = await page.screenshot({ type: 'jpeg', quality: 70, fullPage: true })
+        const triage = await triagePage(anthropic, fullPageScreenshot.toString('base64'), pageConfig.url, limitedPanels.length)
+        console.log(`  Page triage: AI found ${triage.total_zones_identified} zones, scraper found ${limitedPanels.length} panels`)
+        for (const gap of triage.scraper_coverage_gaps) console.warn(`  Coverage gap: ${gap}`)
+        for (const issue of triage.page_level_issues) console.warn(`  Page issue: ${issue}`)
+        if (triage.total_zones_identified > 0 && limitedPanels.length === 0) {
+          console.warn(`WARNING: ${pageConfig.label} has ${triage.total_zones_identified} marketing zones but scraper found 0 panels`)
+        }
+
+        const { error: triageInsertError } = await supabase.from('site_quality_page_triage').insert({
+          run_id: runId,
+          page_url: triage.page_url,
+          page_label: pageConfig.label,
+          screenshot_taken: true,
+          total_zones_ai: triage.total_zones_identified,
+          total_panels_scraper: limitedPanels.length,
+          zones: triage.zones,
+          page_level_issues: triage.page_level_issues,
+          scraper_coverage_gaps: triage.scraper_coverage_gaps,
+        })
+
+        if (triageInsertError) {
+          throw new Error(`Failed to insert page triage for ${pageConfig.label}: ${triageInsertError.message}`)
+        }
+      } else {
+        console.log(`  Skipping page triage for ${pageConfig.label} — no scraped panels`)
+      }
+
+      if (panels.length > MAX_PANELS_PER_PAGE) {
+        console.warn(`  ${pageConfig.label} has ${panels.length} panels; limiting scoring to ${MAX_PANELS_PER_PAGE}`)
+      }
+
+      for (let i = 0; i < limitedPanels.length; i += 1) {
+        if (totalPanelsProcessed >= MAX_TOTAL_PANELS) {
+          console.warn(`Reached total panel limit of ${MAX_TOTAL_PANELS}; ending run early`)
+          break pageLoop
+        }
+
+        const panel = limitedPanels[i]
         const panelInput = {
-          panelId: `${l1Page.label}-${panel.slot}-${i + 1}`,
-          panelName: panel.altText || `${l1Page.label} ${panel.slot}`,
-          categoryL1: l1Page.label,
-          sourcePageUrl: l1Page.url,
-          outboundUrl: panel.outboundHref || l1Page.url,
+          panelId: `${pageConfig.label}-${panel.slot}-${i + 1}`,
+          panelName: panel.altText || `${pageConfig.label} ${panel.slot}`,
+          categoryL1: pageConfig.label,
+          sourcePageUrl: pageConfig.url,
+          outboundUrl: panel.outboundHref || pageConfig.url,
           panelImageUrl: panel.imageUrl,
-          aorOwner: toTitleCase(l1Page.aorOwner),
+          aorOwner: pageConfig.aorOwner ? toTitleCase(pageConfig.aorOwner) : null,
+          pageDepth: pageConfig.depth,
+          parentPageLabel: pageConfig.parentLabel ?? null,
           adWeek: panel.adWeek,
           adYear: panel.adYear,
           slot: panel.slot,
           isStale: panel.isStale,
           categoryFolder: panel.categoryFolder,
         }
-        console.log(`  Scoring panel ${i + 1}/${panels.length}: ${panelInput.panelName}`)
+        totalPanelsProcessed += 1
+        const fingerprint = computePanelFingerprint(panelInput.panelImageUrl, panelInput.outboundUrl)
+
+        if (suppressedFingerprints.has(fingerprint)) {
+          console.log(`  Skipping ${panelInput.panelName} — scoring suppressed`)
+
+          const { data: previousResult, error: previousResultError } = await supabase
+            .from('site_quality_panel_results')
+            .select('score, issues, ai_reasoning, panel_type, featured_product, brand_name, price_shown, offer_language, cta_text, destination_relevance_keywords')
+            .eq('panel_fingerprint', fingerprint)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle<PreviousPanelResult>()
+
+          if (previousResultError) {
+            throw new Error(`Failed to load previous result for suppressed panel ${panelInput.panelName}: ${previousResultError.message}`)
+          }
+
+          results.push(buildSuppressedResult(panelInput, previousResult))
+          continue
+        }
+
+        console.log(`  Scoring panel ${i + 1}/${limitedPanels.length}: ${panelInput.panelName}`)
 
         try {
           const scored = await scorePanelWithPage(page, panelInput)
@@ -616,6 +804,8 @@ async function main() {
         panel_name: item.panelName,
         category_l1: item.categoryL1,
         source_page_url: item.sourcePageUrl,
+        page_depth: item.pageDepth,
+        parent_page_label: item.parentPageLabel ?? null,
         outbound_url: item.outboundUrl,
         aor_owner: item.aorOwner,
         ad_week: item.adWeek ?? null,
@@ -647,6 +837,44 @@ async function main() {
       if (resultError) {
         console.error('Failed to insert panel result:', resultError)
         throw resultError
+      }
+
+      const uniqueDestinationUrls = Array.from(new Set(results.map((item) => item.outboundUrl).filter(Boolean)))
+      try {
+        const destinationMetrics = await fetchDestinationMetrics(uniqueDestinationUrls)
+
+        for (const [url, metrics] of Array.from(destinationMetrics.entries())) {
+          const { error: metricsUpdateError } = await supabase
+            .from('site_quality_panel_results')
+            .update({
+              destination_sessions_7d: metrics.sessions_7d,
+              destination_bounce_rate_7d: metrics.bounce_rate_7d,
+              destination_add_to_cart_rate_7d: metrics.add_to_cart_rate_7d,
+              destination_revenue_7d: metrics.revenue_7d,
+              destination_transactions_7d: metrics.transactions_7d,
+            })
+            .eq('run_id', runId)
+            .eq('outbound_url', url)
+
+          if (metricsUpdateError) {
+            throw new Error(`Failed to update destination metrics for ${url}: ${metricsUpdateError.message}`)
+          }
+        }
+
+        const atRiskRevenue = results
+          .filter((result) => result.score !== null && result.score < 70)
+          .reduce((sum, result) => sum + (destinationMetrics.get(result.outboundUrl)?.revenue_7d ?? 0), 0)
+
+        const { error: atRiskRevenueError } = await supabase
+          .from('site_quality_panel_runs')
+          .update({ at_risk_revenue_7d: atRiskRevenue })
+          .eq('id', runId)
+
+        if (atRiskRevenueError) {
+          throw new Error(`Failed to update at-risk revenue: ${atRiskRevenueError.message}`)
+        }
+      } catch (ga4Error) {
+        console.warn('GA4 destination metrics enrichment failed. Continuing without revenue data.', ga4Error)
       }
     }
 

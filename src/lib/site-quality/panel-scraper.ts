@@ -30,6 +30,27 @@ export interface ParsedPanelUrl {
 
 const PANEL_URL_REGEX = /\/assets\/([^/]+)\/([^/]+)\/Week(\d+)\/(\d{2})-(\d{2})W_[^-]+-(.+)\.jpg/i
 const EXCLUDED_ASSET_MARKERS = ['/ux/', 'Global', 'MEGA-MENU', 'HAMBURGER', 'Static']
+const PANEL_SELECTORS = [
+  'a > img[src*="assets"], a > img[src*="panel"]',
+  '.carousel-item a img, .slick-slide a img, .swiper-slide a img, [class*="carousel"] a img, [class*="slider"] a img',
+  '.hero a img, [class*="hero"] a img, .banner a img, [class*="banner"] a img',
+  'a img[width], a img[height]',
+]
+const HOMEPAGE_PANEL_SELECTORS = [
+  ...PANEL_SELECTORS,
+  '[class*="feature"] a img',
+  '[class*="promo"] a img',
+]
+
+interface RawPanelCandidate {
+  imageUrl: string
+  altText: string
+  outboundHref: string
+  width: number
+  height: number
+  inNav: boolean
+  order: number
+}
 
 export function getAdWeek(date: Date): number {
   const year = date.getFullYear()
@@ -70,42 +91,141 @@ export async function scrapePanels(page: Page, url: string, label: string): Prom
     await page.goto(url, { waitUntil: 'domcontentloaded' })
     await page.waitForTimeout(2000)
 
-    const rawPanels = await page.evaluate(() => {
-      return Array.from(document.querySelectorAll('img'))
-        .map((img) => {
-          const srcValue = img.getAttribute('src') || img.getAttribute('data-src') || ''
-          const alt = img.getAttribute('alt') || ''
-          const link = img.closest('a')
-          return {
-            src: srcValue ? new URL(srcValue, window.location.href).toString() : '',
-            alt,
-            href: link?.getAttribute('href') ? new URL(link.getAttribute('href') as string, window.location.href).toString() : '',
-            naturalWidth: img.naturalWidth,
-          }
+    const rawPanels = await page.evaluate((selectorGroups) => {
+      const isHomepage = window.location.pathname === '/' || window.location.pathname === ''
+      const selectors = isHomepage ? selectorGroups.homepage : selectorGroups.standard
+      const candidates = new Map<string, RawPanelCandidate>()
+      let order = 0
+
+      function isInNav(element: Element) {
+        return Boolean(element.closest('nav, [role="navigation"], header nav, [class*="mega-menu"], [class*="menu"], [class*="nav"]'))
+      }
+
+      function isProductTile(element: Element) {
+        return Boolean(
+          element.closest(
+            '[class*="product-card"], [class*="product-item"], [class*="product-tile"], [class*="productCard"], [class*="productItem"], [data-testid*="product"]'
+          )
+        )
+      }
+
+      function toAbsoluteUrl(value: string | null | undefined) {
+        if (!value) return ''
+        try {
+          return new URL(value, window.location.href).toString()
+        } catch {
+          return ''
+        }
+      }
+
+      function register(candidate: RawPanelCandidate) {
+        const key = candidate.imageUrl || `${candidate.outboundHref}::${candidate.order}`
+        const existing = candidates.get(key)
+        if (!existing || (candidate.width * candidate.height) > (existing.width * existing.height)) {
+          candidates.set(key, candidate)
+        }
+      }
+
+      function anchorFor(element: Element) {
+        if (element instanceof HTMLAnchorElement) return element
+        return element.closest('a')
+      }
+
+      function collectImage(img: HTMLImageElement) {
+        const anchor = anchorFor(img)
+        if (!anchor) return
+        if (isProductTile(img)) return
+
+        const imageUrl = toAbsoluteUrl(img.getAttribute('src') || img.getAttribute('data-src') || img.currentSrc)
+        const outboundHref = toAbsoluteUrl(anchor.getAttribute('href'))
+        if (!imageUrl || !outboundHref) return
+
+        const rect = img.getBoundingClientRect()
+        register({
+          imageUrl,
+          altText: img.getAttribute('alt') || anchor.textContent?.trim() || '',
+          outboundHref,
+          width: Math.max(img.naturalWidth || 0, Math.round(rect.width)),
+          height: Math.max(img.naturalHeight || 0, Math.round(rect.height)),
+          inNav: isInNav(img),
+          order: order += 1,
         })
-    })
+      }
+
+      function collectBackground(element: HTMLElement) {
+        const anchor = anchorFor(element)
+        if (!anchor) return
+        if (isProductTile(element)) return
+
+        const styles = window.getComputedStyle(element)
+        const backgroundImage = styles.backgroundImage
+        const match = backgroundImage.match(/url\(["']?(.*?)["']?\)/i)
+        if (!match?.[1]) return
+
+        const imageUrl = toAbsoluteUrl(match[1])
+        const outboundHref = toAbsoluteUrl(anchor.getAttribute('href'))
+        if (!imageUrl || !outboundHref) return
+
+        const rect = element.getBoundingClientRect()
+        register({
+          imageUrl,
+          altText: element.getAttribute('aria-label') || anchor.textContent?.trim() || '',
+          outboundHref,
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+          inNav: isInNav(element),
+          order: order += 1,
+        })
+      }
+
+      for (const selector of selectors) {
+        for (const node of Array.from(document.querySelectorAll(selector))) {
+          if (node instanceof HTMLImageElement) {
+            collectImage(node)
+          } else if (node instanceof HTMLElement) {
+            collectBackground(node)
+          }
+        }
+      }
+
+      if (isHomepage) {
+        const backgroundElements = Array.from(document.querySelectorAll('a, [role="link"], [onclick]'))
+          .filter((node): node is HTMLElement => node instanceof HTMLElement)
+          .filter((node) => {
+            const styles = window.getComputedStyle(node)
+            return styles.backgroundImage && styles.backgroundImage !== 'none'
+          })
+
+        for (const element of backgroundElements) {
+          collectBackground(element)
+        }
+      }
+
+      return Array.from(candidates.values())
+    }, { standard: PANEL_SELECTORS, homepage: HOMEPAGE_PANEL_SELECTORS })
 
     const currentWeek = getAdWeek(new Date())
     const panels: ScrapedPanel[] = []
 
     for (const item of rawPanels) {
-      if (!item.src.includes('/assets/')) continue
-      if (EXCLUDED_ASSET_MARKERS.some((marker) => item.src.includes(marker))) continue
-      if (item.naturalWidth <= 300) continue
+      if (item.inNav) continue
+      if (!item.outboundHref) continue
+      if (item.width < 100 || item.height < 50) continue
+      if (EXCLUDED_ASSET_MARKERS.some((marker) => item.imageUrl.includes(marker))) continue
 
-      const parsed = parsePanelUrl(item.src)
-      if (!parsed) continue
+      const parsed = parsePanelUrl(item.imageUrl)
+      const fallbackSlot = `slot-${String(item.order).padStart(2, '0')}`
 
       panels.push({
-        imageUrl: item.src,
-        altText: item.alt,
-        outboundHref: item.href,
-        categoryFolder: parsed.categoryFolder,
-        level: parsed.level,
-        adWeek: parsed.adWeek,
-        adYear: parsed.adYear,
-        slot: parsed.slot,
-        isStale: parsed.adWeek !== currentWeek,
+        imageUrl: item.imageUrl,
+        altText: item.altText,
+        outboundHref: item.outboundHref,
+        categoryFolder: parsed?.categoryFolder ?? label.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+        level: parsed?.level ?? 'dynamic',
+        adWeek: parsed?.adWeek ?? currentWeek,
+        adYear: parsed?.adYear ?? new Date().getFullYear(),
+        slot: parsed?.slot ?? fallbackSlot,
+        isStale: parsed ? parsed.adWeek !== currentWeek : false,
       })
     }
 

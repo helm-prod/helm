@@ -120,6 +120,34 @@ function MetaRow({ label, value, pill = false }: { label: string; value: string;
   )
 }
 
+function formatPercent(value: number | null | undefined) {
+  if (value === null || value === undefined) return '—'
+  return `${Math.round(value * 100)}%`
+}
+
+function formatCurrency(value: number | null | undefined) {
+  if (value === null || value === undefined) return '—'
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0,
+  }).format(value)
+}
+
+function bounceRateTone(value: number | null | undefined) {
+  if (value === null || value === undefined) return 'text-slate-200'
+  if (value < 0.4) return 'text-emerald-400'
+  if (value <= 0.6) return 'text-amber-400'
+  return 'text-red-400'
+}
+
+function addToCartRateTone(value: number | null | undefined) {
+  if (value === null || value === undefined) return 'text-slate-200'
+  if (value > 0.05) return 'text-emerald-400'
+  if (value >= 0.02) return 'text-amber-400'
+  return 'text-red-400'
+}
+
 function canManageReviews(role: UserRole) {
   return role === 'admin' || role === 'senior_web_producer'
 }
@@ -245,6 +273,13 @@ export function PanelDetailDrawer({
   const canManage = canManageReviews(userRole)
   const pageLabel = activePanel.source_page_url ? extractPageLabel(activePanel.source_page_url) : activePanel.category_l1
   const productCount = activePanel.product_count_on_destination ?? null
+  const hasDestinationTraffic = [
+    activePanel.destination_sessions_7d,
+    activePanel.destination_bounce_rate_7d,
+    activePanel.destination_add_to_cart_rate_7d,
+    activePanel.destination_revenue_7d,
+    activePanel.destination_transactions_7d,
+  ].some((value) => value !== null && value !== undefined)
   const productVisibilityTone =
     productCount === null
       ? 'text-slate-500'
@@ -424,7 +459,7 @@ export function PanelDetailDrawer({
             <div className="mt-1 text-[11px] text-slate-500">
               <span>{pageLabel}</span>
               <span>{' · '}</span>
-              <span>{panel.aor_owner}</span>
+              <span>{panel.aor_owner || 'Unassigned'}</span>
               <span>{' · '}</span>
               <span>Found on: </span>
               {panel.source_page_url ? (
@@ -487,6 +522,21 @@ export function PanelDetailDrawer({
             )}
           </div>
         </section>
+
+        {hasDestinationTraffic && (
+          <section className="mt-4 border-b border-[rgba(71,85,105,0.15)] pb-4">
+            <div className="border-b border-[rgba(71,85,105,0.15)] pb-2 text-[10px] font-medium uppercase tracking-wider text-slate-500">Destination traffic</div>
+            <div className="mt-3 grid grid-cols-[120px_1fr] gap-x-3 gap-y-1 text-xs">
+              <MetaRow label="Sessions (7d)" value={activePanel.destination_sessions_7d?.toLocaleString() || '—'} />
+              <div className="text-slate-500">Bounce rate</div>
+              <div className={bounceRateTone(activePanel.destination_bounce_rate_7d)}>{formatPercent(activePanel.destination_bounce_rate_7d)}</div>
+              <div className="text-slate-500">Add to cart rate</div>
+              <div className={addToCartRateTone(activePanel.destination_add_to_cart_rate_7d)}>{formatPercent(activePanel.destination_add_to_cart_rate_7d)}</div>
+              <MetaRow label="Revenue (7d)" value={formatCurrency(activePanel.destination_revenue_7d)} />
+              <MetaRow label="Transactions" value={activePanel.destination_transactions_7d?.toLocaleString() || '—'} />
+            </div>
+          </section>
+        )}
 
         {!panel.is_bot_blocked && visibleIssues.length > 0 && (
           <section className="mt-4 border-b border-[rgba(71,85,105,0.15)] pb-4">

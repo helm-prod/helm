@@ -51,5 +51,25 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
-  return NextResponse.json({ run, results: results ?? [], page, pageSize, total: count ?? 0 })
+  const { data: triage, error: triageError } = await supabase
+    .from('site_quality_page_triage')
+    .select('*')
+    .eq('run_id', runId)
+    .order('created_at', { ascending: false })
+
+  if (triageError) {
+    return NextResponse.json({ error: triageError.message }, { status: 500 })
+  }
+
+  const { data: recentRuns, error: recentRunsError } = await supabase
+    .from('site_quality_panel_runs')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(6)
+
+  if (recentRunsError) {
+    return NextResponse.json({ error: recentRunsError.message }, { status: 500 })
+  }
+
+  return NextResponse.json({ run, results: results ?? [], triage: triage ?? [], recentRuns: recentRuns ?? [], page, pageSize, total: count ?? 0 })
 }

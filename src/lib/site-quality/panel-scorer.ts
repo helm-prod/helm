@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
+import { createClient } from '@supabase/supabase-js'
 import { createHash } from 'crypto'
 import type { Response } from 'playwright-core'
 import { L1_PAGES } from '@/config/l1-pages'
@@ -7,6 +8,7 @@ import { getAuthenticatedPage } from './nexcom-auth'
 import { scrapePanels } from './panel-scraper'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
 
 type PanelIssueType =
   | 'item_not_found'
@@ -72,6 +74,19 @@ export interface PanelScoreResult {
   aiReasoning: string
   outboundPageTitle: string
   panelImageUrl: string
+}
+
+interface PreviousPanelResult {
+  score: number | null
+  issues: Array<{ type: PanelIssueType; detail: string }> | null
+  ai_reasoning: string | null
+  panel_type: 'PRODUCT' | 'BRAND' | 'CATEGORY' | null
+  featured_product: string | null
+  brand_name: string | null
+  price_shown: string | null
+  offer_language: string | null
+  cta_text: string | null
+  destination_relevance_keywords: string[] | null
 }
 
 function computePanelFingerprint(panelImageUrl: string, outboundUrl: string): string {
@@ -162,6 +177,29 @@ function buildPanelFailureResult(panel: PanelInput, reasoning: string): PanelSco
     score: null,
     issues: [],
     aiReasoning: reasoning,
+    outboundPageTitle: '',
+    panelImageUrl: panel.panelImageUrl,
+  }
+}
+
+function buildSuppressedResult(panel: PanelInput, previousResult: PreviousPanelResult | null): PanelScoreResult {
+  return {
+    ...buildBaseResult(panel),
+    panelType: previousResult?.panel_type ?? undefined,
+    featuredProduct: previousResult?.featured_product ?? null,
+    brandName: previousResult?.brand_name ?? null,
+    priceShown: previousResult?.price_shown ?? null,
+    offerLanguage: previousResult?.offer_language ?? null,
+    ctaText: previousResult?.cta_text ?? null,
+    destinationRelevanceKeywords: previousResult?.destination_relevance_keywords ?? null,
+    hasEmptyResults: false,
+    isBotBlocked: false,
+    redirectCount: 0,
+    productCountOnDestination: null,
+    isOutOfStock: false,
+    score: previousResult?.score ?? null,
+    issues: previousResult?.issues ?? [{ type: 'none', detail: 'Scoring suppressed — carried forward from previous run' }],
+    aiReasoning: previousResult?.ai_reasoning ?? 'Scoring suppressed by admin',
     outboundPageTitle: '',
     panelImageUrl: panel.panelImageUrl,
   }
@@ -450,6 +488,18 @@ export async function scoreLivePanels(adWeek?: number) {
 
   try {
     const results: PanelScoreResult[] = []
+    const { data: suppressions, error: suppressionsError } = await supabase
+      .from('panel_reviews')
+      .select('panel_fingerprint, suppress_scoring_until')
+      .eq('status', 'suppressed')
+      .gt('suppress_scoring_until', new Date().toISOString())
+
+    if (suppressionsError) {
+      throw new Error(`Failed to load suppressions: ${suppressionsError.message}`)
+    }
+
+    const suppressedFingerprints = new Set((suppressions || []).map((suppression) => suppression.panel_fingerprint))
+    console.log(`${suppressedFingerprints.size} panels suppressed — will carry forward previous scores`)
 
     for (const l1Page of L1_PAGES) {
       const scraped = await scrapePanels(page, l1Page.url, l1Page.label)
@@ -470,6 +520,26 @@ export async function scoreLivePanels(adWeek?: number) {
           slot: panel.slot,
           isStale: panel.isStale,
           categoryFolder: panel.categoryFolder,
+        }
+        const fingerprint = computePanelFingerprint(panelInput.panelImageUrl, panelInput.outboundUrl)
+
+        if (suppressedFingerprints.has(fingerprint)) {
+          console.log(`Skipping ${panelInput.panelName} — scoring suppressed`)
+
+          const { data: previousResult, error: previousResultError } = await supabase
+            .from('site_quality_panel_results')
+            .select('score, issues, ai_reasoning, panel_type, featured_product, brand_name, price_shown, offer_language, cta_text, destination_relevance_keywords')
+            .eq('panel_fingerprint', fingerprint)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle<PreviousPanelResult>()
+
+          if (previousResultError) {
+            throw new Error(`Failed to load previous result for suppressed panel ${panelInput.panelName}: ${previousResultError.message}`)
+          }
+
+          results.push(buildSuppressedResult(panelInput, previousResult))
+          continue
         }
 
         try {

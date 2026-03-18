@@ -44,6 +44,7 @@ export interface SiteQualityPanelRun {
   created_at: string
   completed_at: string | null
   created_by: string | null
+  at_risk_revenue_7d?: number | null
 }
 
 export type SiteQualityPanelIssueType =
@@ -62,6 +63,29 @@ export interface SiteQualityPanelIssue {
   detail: string
 }
 
+export interface SiteQualityPageMarketingZone {
+  description: string
+  zone_type: 'promotional' | 'brand' | 'navigational' | 'hero' | 'unknown'
+  approximate_position: 'top' | 'middle' | 'bottom'
+  has_clickable_link: boolean
+  appears_broken: boolean
+  notes: string | null
+}
+
+export interface SiteQualityPageTriage {
+  id: string
+  run_id: string
+  page_url: string
+  page_label: string | null
+  screenshot_taken: boolean | null
+  total_zones_ai: number | null
+  total_panels_scraper: number | null
+  zones: SiteQualityPageMarketingZone[] | null
+  page_level_issues: string[] | null
+  scraper_coverage_gaps: string[] | null
+  created_at: string
+}
+
 export interface SiteQualityPanelResult {
   id: string
   run_id: string
@@ -69,6 +93,8 @@ export interface SiteQualityPanelResult {
   panel_name: string
   category_l1: string
   source_page_url: string | null
+  page_depth?: number | null
+  parent_page_label?: string | null
   panel_type?: 'PRODUCT' | 'BRAND' | 'CATEGORY'
   featured_product?: string | null
   brand_name?: string | null
@@ -76,13 +102,18 @@ export interface SiteQualityPanelResult {
   offer_language?: string | null
   cta_text?: string | null
   destination_relevance_keywords?: string[] | null
+  destination_sessions_7d?: number | null
+  destination_bounce_rate_7d?: number | null
+  destination_add_to_cart_rate_7d?: number | null
+  destination_revenue_7d?: number | null
+  destination_transactions_7d?: number | null
   has_empty_results?: boolean
   is_bot_blocked?: boolean
   redirect_count?: number
   product_count_on_destination?: number | null
   is_out_of_stock?: boolean
   outbound_url: string
-  aor_owner: string
+  aor_owner: string | null
   ad_week: number | null
   ad_year: number | null
   slot: string | null
@@ -107,6 +138,8 @@ export interface SiteQualityLinkResultsResponse {
 export interface SiteQualityPanelResultsResponse {
   run: SiteQualityPanelRun | null
   results: SiteQualityPanelResult[]
+  triage: SiteQualityPageTriage[]
+  recentRuns?: SiteQualityPanelRun[]
   page: number
   pageSize: number
   total: number

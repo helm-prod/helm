@@ -1,11 +1,12 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { RefreshCw, Send } from 'lucide-react'
+import { AlertTriangle, ChevronDown, ChevronRight, RefreshCw, Send } from 'lucide-react'
 import { PanelDetailDrawer } from '@/components/site-quality/panel-detail-drawer'
 import { ReportRecipientsManager } from '@/components/site-quality/report-recipients-manager'
+import { L1_PAGES } from '@/config/l1-pages'
 import type { ReportRecipient } from '@/lib/site-quality/report-recipients'
-import type { SiteQualityPanelResult, SiteQualityPanelRun } from '@/lib/site-quality/types'
+import type { SiteQualityPageTriage, SiteQualityPanelResult, SiteQualityPanelRun } from '@/lib/site-quality/types'
 import type { UserRole } from '@/lib/types/database'
 
 type PanelResult = Omit<SiteQualityPanelResult, 'score' | 'panel_type'> & {
@@ -24,6 +25,26 @@ type PanelResult = Omit<SiteQualityPanelResult, 'score' | 'panel_type'> & {
   source_page_url?: string | null
   destination_relevance_keywords?: string[] | null
   panel_fingerprint?: string | null
+  page_depth?: number | null
+  parent_page_label?: string | null
+}
+
+interface PageGroupNode {
+  key: string
+  label: string
+  depth: number
+  parentLabel: string | null
+  panels: PanelResult[]
+  children: PageGroupNode[]
+}
+
+interface PageOverviewRow {
+  key: string
+  label: string
+  depth: number
+  parentLabel: string | null
+  triage: SiteQualityPageTriage | null
+  panelCount: number
 }
 
 type PanelSeverity = 'action_needed' | 'optimization' | 'bot_blocked' | 'passing'
@@ -67,6 +88,15 @@ interface AssignableUser {
 }
 
 function extractPageLabel(url: string): string {
+  const configMatch = L1_PAGES.find((page) => page.url === url)
+  if (configMatch) return configMatch.label
+
+  const urlNCode = url.match(/N-\d+/)
+  if (urlNCode) {
+    const nCodeMatch = L1_PAGES.find((page) => page.url.includes(urlNCode[0]))
+    if (nCodeMatch) return nCodeMatch.label
+  }
+
   try {
     const u = new URL(url)
     const path = u.pathname
@@ -83,9 +113,9 @@ function extractPageLabel(url: string): string {
         .replace(/\b\w/g, (c) => c.toUpperCase())
     }
 
-    return 'Unknown Page'
+    return 'Other'
   } catch {
-    return 'Unknown Page'
+    return 'Other'
   }
 }
 
@@ -136,7 +166,8 @@ function pageHealthColor(panels: PanelResult[]): string {
 }
 
 function getPageLabel(panel: PanelResult) {
-  return panel.source_page_url ? extractPageLabel(panel.source_page_url) : panel.category_l1 || 'Unknown Page'
+  if (panel.category_l1) return panel.category_l1
+  return panel.source_page_url ? extractPageLabel(panel.source_page_url) : 'Other'
 }
 
 function getVisibleIssues(panel: PanelResult) {
@@ -166,6 +197,24 @@ function getHighestSeverityIssue(panel: PanelResult) {
   return issues[0] ?? null
 }
 
+function sortPageNodes(nodes: PageGroupNode[]): PageGroupNode[] {
+  return [...nodes]
+    .sort((a, b) => {
+      if (a.depth !== b.depth) return a.depth - b.depth
+      if (a.label === 'Homepage') return -1
+      if (b.label === 'Homepage') return 1
+      return a.label.localeCompare(b.label)
+    })
+    .map((node) => ({
+      ...node,
+      children: sortPageNodes(node.children),
+    }))
+}
+
+function hasCriticalCoverageGap(triage: SiteQualityPageTriage | null | undefined) {
+  return Boolean(triage && (triage.total_zones_ai ?? 0) > 0 && (triage.total_panels_scraper ?? 0) === 0)
+}
+
 function formatRunDate(value: string | null | undefined) {
   if (!value) return 'Current run'
   const date = new Date(value)
@@ -186,6 +235,30 @@ function formatDelta(value: number | null, positiveIsGood = true) {
     label: `${value > 0 ? '+' : ''}${value}`,
     className: improved ? 'bg-emerald-500/10 text-emerald-300' : 'bg-red-500/10 text-red-300',
   }
+}
+
+function formatCurrency(value: number | null | undefined) {
+  if (value === null || value === undefined) return '—'
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0,
+  }).format(value)
+}
+
+function impactScore(panel: PanelResult) {
+  if (panel.score === null || panel.destination_revenue_7d === null || panel.destination_revenue_7d === undefined) return -1
+  return panel.destination_revenue_7d * ((100 - panel.score) / 100)
+}
+
+function revenueSparkValues(runs: SiteQualityPanelRun[]) {
+  const values = runs
+    .slice()
+    .reverse()
+    .map((entry) => entry.at_risk_revenue_7d ?? null)
+  const max = Math.max(...values.map((value) => value ?? 0), 0)
+  if (max <= 0) return values
+  return values.map((value) => (value === null ? null : Math.round((value / max) * 100)))
 }
 
 function SparkBars({ values, tone }: { values: Array<number | null>; tone: 'emerald' | 'amber' }) {
@@ -247,6 +320,8 @@ function TableSection({
   subtitle,
   titleClassName,
   rows,
+  sort,
+  onSortChange,
   reviewMap,
   currentUserId,
   onSelect,
@@ -255,21 +330,33 @@ function TableSection({
   subtitle: string
   titleClassName: string
   rows: PanelResult[]
+  sort: 'score' | 'impact'
+  onSortChange: (value: 'score' | 'impact') => void
   reviewMap: Map<string, PanelReview>
   currentUserId: string | null
   onSelect: (panel: PanelResult) => void
 }) {
   return (
     <section className="rounded-lg border border-[rgba(71,85,105,0.15)] bg-[#111827] p-3">
-      <div className="mb-2 flex items-baseline gap-2">
-        <h3 className={`text-xs font-medium ${titleClassName}`}>{title}</h3>
-        <span className="text-xs text-slate-500">{subtitle}</span>
+      <div className="mb-2 flex items-baseline justify-between gap-2">
+        <div className="flex items-baseline gap-2">
+          <h3 className={`text-xs font-medium ${titleClassName}`}>{title}</h3>
+          <span className="text-xs text-slate-500">{subtitle}</span>
+        </div>
+        <select
+          value={sort}
+          onChange={(event) => onSortChange(event.target.value as 'score' | 'impact')}
+          className="rounded border border-[rgba(71,85,105,0.15)] bg-[#1a2332] px-2 py-1 text-xs text-slate-400"
+        >
+          <option value="score">Sort by score</option>
+          <option value="impact">Sort by impact</option>
+        </select>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full border-collapse">
           <thead>
             <tr>
-              {['Panel', 'Page', 'Issue', 'Destination shows', 'Score', 'Δ'].map((heading) => (
+              {['Panel', 'Page', 'Issue', 'Destination shows', 'Score', 'Revenue', 'Δ'].map((heading) => (
                 <th key={heading} className="border-b border-[rgba(71,85,105,0.15)] px-2 py-1.5 text-left text-[10px] font-medium uppercase tracking-wider text-slate-500">
                   {heading}
                 </th>
@@ -306,6 +393,16 @@ function TableSection({
                   <td className={`border-b border-[rgba(71,85,105,0.15)] px-2 py-2 text-sm font-medium tabular-nums ${scoreColor(panel.score)}`}>
                     {panel.score ?? '—'}
                   </td>
+                  <td className="border-b border-[rgba(71,85,105,0.15)] px-2 py-2 text-[11px]">
+                    {panel.destination_revenue_7d && panel.destination_revenue_7d > 0 ? (
+                      <span className={`${panel.destination_revenue_7d > 5000 ? 'font-semibold text-emerald-300' : panel.destination_revenue_7d > 1000 ? 'font-semibold text-emerald-400' : 'text-slate-400'}`}>
+                        {panel.destination_revenue_7d > 5000 ? '● ' : ''}
+                        {formatCurrency(panel.destination_revenue_7d)}
+                      </span>
+                    ) : (
+                      <span className="text-slate-500">—</span>
+                    )}
+                  </td>
                   <td className="border-b border-[rgba(71,85,105,0.15)] px-2 py-2 text-[11px] text-slate-500">—</td>
                 </tr>
               )
@@ -320,16 +417,22 @@ function TableSection({
 export function PanelIntelligenceDashboard({
   initialRun,
   initialResults,
+  initialTriage,
+  initialRecentRuns,
   initialRecipients,
   userRole,
 }: {
   initialRun: SiteQualityPanelRun | null
   initialResults: SiteQualityPanelResult[]
+  initialTriage: SiteQualityPageTriage[]
+  initialRecentRuns: SiteQualityPanelRun[]
   initialRecipients: ReportRecipient[]
   userRole: UserRole
 }) {
   const [run, setRun] = useState(initialRun)
   const [results, setResults] = useState<PanelResult[]>(initialResults as PanelResult[])
+  const [triage, setTriage] = useState<SiteQualityPageTriage[]>(initialTriage)
+  const [recentRuns, setRecentRuns] = useState<SiteQualityPanelRun[]>(initialRecentRuns)
   const [selectedPanel, setSelectedPanel] = useState<PanelResult | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [running, setRunning] = useState(false)
@@ -339,11 +442,13 @@ export function PanelIntelligenceDashboard({
   const [activeTab, setActiveTab] = useState<'panel-intelligence' | 'link-health' | 'page-overview'>('panel-intelligence')
   const [search, setSearch] = useState('')
   const [activeFilter, setActiveFilter] = useState<ActiveFilter>({ kind: 'all' })
+  const [issueSort, setIssueSort] = useState<'score' | 'impact'>('score')
   const [passingSort, setPassingSort] = useState<'score' | 'page' | 'aor'>('score')
   const [showAllPassing, setShowAllPassing] = useState(false)
   const [reviews, setReviews] = useState<PanelReview[]>([])
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
   const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([])
+  const [collapsedPages, setCollapsedPages] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
     if (!runId || !running) return
@@ -359,6 +464,8 @@ export function PanelIntelligenceDashboard({
       }
       setRun(data.run)
       setResults((data.results ?? []) as PanelResult[])
+      setTriage((data.triage ?? []) as SiteQualityPageTriage[])
+      setRecentRuns((data.recentRuns ?? []) as SiteQualityPanelRun[])
       if (data.run?.status === 'complete' || data.run?.status === 'failed') {
         setRunning(false)
       }
@@ -391,29 +498,149 @@ export function PanelIntelligenceDashboard({
     return map
   }, [reviews])
 
+  const triageMap = useMemo(() => {
+    const map = new Map<string, SiteQualityPageTriage>()
+    for (const entry of triage) {
+      if (!map.has(entry.page_url)) map.set(entry.page_url, entry)
+    }
+    return map
+  }, [triage])
+
   const pageGroups = useMemo(() => {
-    const map = new Map<string, { key: string; label: string; panels: PanelResult[] }>()
+    const map = new Map<string, PageGroupNode>()
     for (const panel of results) {
       const key = panel.source_page_url || panel.category_l1
+      const label = getPageLabel(panel)
+      const depth = panel.page_depth ?? (label === 'Homepage' ? 0 : 1)
       const existing = map.get(key)
       if (existing) {
         existing.panels.push(panel)
       } else {
         map.set(key, {
           key,
-          label: panel.source_page_url ? extractPageLabel(panel.source_page_url) : panel.category_l1 || 'Unknown Page',
+          label,
+          depth,
+          parentLabel: panel.parent_page_label ?? null,
           panels: [panel],
+          children: [],
         })
       }
     }
-    return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label))
-  }, [results])
+
+    for (const entry of triage) {
+      if (map.has(entry.page_url)) continue
+      const configMatch = L1_PAGES.find((page) => page.url === entry.page_url)
+      map.set(entry.page_url, {
+        key: entry.page_url,
+        label: entry.page_label || configMatch?.label || extractPageLabel(entry.page_url),
+        depth: configMatch?.depth ?? (entry.page_label === 'Homepage' ? 0 : 1),
+        parentLabel: configMatch?.parentLabel ?? null,
+        panels: [],
+        children: [],
+      })
+    }
+
+    const nodes = Array.from(map.values())
+    const labelMap = new Map<string, PageGroupNode[]>()
+    for (const node of nodes) {
+      const matches = labelMap.get(node.label) ?? []
+      matches.push(node)
+      labelMap.set(node.label, matches)
+    }
+
+    const roots: PageGroupNode[] = []
+    for (const node of nodes) {
+      const possibleParents = node.parentLabel ? labelMap.get(node.parentLabel) ?? [] : []
+      const parent = possibleParents
+        .filter((candidate) => candidate.depth < node.depth)
+        .sort((a, b) => b.depth - a.depth)[0]
+
+      if (parent) {
+        parent.children.push(node)
+      } else {
+        roots.push(node)
+      }
+    }
+
+    return sortPageNodes(roots)
+  }, [results, triage])
+
+  const pageOverviewRows = useMemo(() => {
+    const rows = new Map<string, PageOverviewRow>()
+
+    for (const panel of results) {
+      const key = panel.source_page_url || panel.category_l1
+      if (!key) continue
+      const existing = rows.get(key)
+      if (existing) {
+        existing.panelCount += 1
+      } else {
+        rows.set(key, {
+          key,
+          label: getPageLabel(panel),
+          depth: panel.page_depth ?? (getPageLabel(panel) === 'Homepage' ? 0 : 1),
+          parentLabel: panel.parent_page_label ?? null,
+          triage: panel.source_page_url ? triageMap.get(panel.source_page_url) ?? null : null,
+          panelCount: 1,
+        })
+      }
+    }
+
+    for (const entry of triage) {
+      const key = entry.page_url
+      if (rows.has(key)) continue
+      rows.set(key, {
+        key,
+        label: entry.page_label || extractPageLabel(entry.page_url),
+        depth: entry.page_label === 'Homepage' ? 0 : 1,
+        parentLabel: null,
+        triage: entry,
+        panelCount: entry.total_panels_scraper ?? 0,
+      })
+    }
+
+    return Array.from(rows.values()).sort((a, b) => {
+      if (a.depth !== b.depth) return a.depth - b.depth
+      return a.label.localeCompare(b.label)
+    })
+  }, [results, triage, triageMap])
+
+  useEffect(() => {
+    setCollapsedPages((current) => {
+      const next = { ...current }
+      const visit = (nodes: PageGroupNode[]) => {
+        for (const node of nodes) {
+          if (node.children.length > 0 && !(node.key in next)) next[node.key] = false
+          visit(node.children)
+        }
+      }
+      visit(pageGroups)
+      return next
+    })
+  }, [pageGroups])
 
   const producerGroups = useMemo(() => {
-    const counts = new Map<string, number>()
-    for (const panel of results) counts.set(panel.aor_owner, (counts.get(panel.aor_owner) ?? 0) + 1)
+    const counts = new Map<string, { count: number; scoreTotal: number; scoredCount: number; atRiskRevenue: number }>()
+    for (const panel of results) {
+      const owner = panel.aor_owner || 'Unassigned'
+      const current = counts.get(owner) ?? { count: 0, scoreTotal: 0, scoredCount: 0, atRiskRevenue: 0 }
+      current.count += 1
+      if (panel.score !== null) {
+        current.scoreTotal += panel.score
+        current.scoredCount += 1
+      }
+      if (panel.score !== null && panel.score < 70) {
+        current.atRiskRevenue += panel.destination_revenue_7d ?? 0
+      }
+      counts.set(owner, current)
+    }
     return Array.from(counts.entries())
-      .map(([owner, count]) => ({ owner, count }))
+      .map(([owner, value]) => ({
+        owner,
+        count: value.count,
+        avgScore: value.scoredCount > 0 ? Math.round(value.scoreTotal / value.scoredCount) : null,
+        atRiskRevenue: value.atRiskRevenue,
+      }))
       .sort((a, b) => a.owner.localeCompare(b.owner))
   }, [results])
 
@@ -451,7 +678,7 @@ export function PanelIntelligenceDashboard({
           case 'page':
             return (panel.source_page_url || panel.category_l1) === activeFilter.key
           case 'producer':
-            return panel.aor_owner === activeFilter.owner
+            return (panel.aor_owner || 'Unassigned') === activeFilter.owner
           case 'quick':
             if (activeFilter.key === 'action-needed') return classifyPanel(panel) === 'action_needed'
             if (activeFilter.key === 'bot-blocked') return classifyPanel(panel) === 'bot_blocked'
@@ -492,6 +719,18 @@ export function PanelIntelligenceDashboard({
     return groups
   }, [filteredResults])
 
+  const sortedActionNeededPanels = useMemo(() => {
+    const panels = [...groupedPanels.action_needed]
+    if (issueSort === 'impact') return panels.sort((a, b) => impactScore(b) - impactScore(a))
+    return panels.sort((a, b) => (a.score ?? 101) - (b.score ?? 101))
+  }, [groupedPanels.action_needed, issueSort])
+
+  const sortedOptimizationPanels = useMemo(() => {
+    const panels = [...groupedPanels.optimization]
+    if (issueSort === 'impact') return panels.sort((a, b) => impactScore(b) - impactScore(a))
+    return panels.sort((a, b) => (a.score ?? 101) - (b.score ?? 101))
+  }, [groupedPanels.optimization, issueSort])
+
   const scoredPanels = useMemo(() => filteredResults.filter((panel) => panel.score !== null), [filteredResults])
   const avgScore = useMemo(() => {
     if (scoredPanels.length === 0) return null
@@ -506,7 +745,7 @@ export function PanelIntelligenceDashboard({
   const passingPanels = useMemo(() => {
     return [...groupedPanels.passing].sort((a, b) => {
       if (passingSort === 'page') return getPageLabel(a).localeCompare(getPageLabel(b))
-      if (passingSort === 'aor') return a.aor_owner.localeCompare(b.aor_owner)
+      if (passingSort === 'aor') return (a.aor_owner || 'Unassigned').localeCompare(b.aor_owner || 'Unassigned')
       return (b.score ?? -1) - (a.score ?? -1)
     })
   }, [groupedPanels.passing, passingSort])
@@ -517,9 +756,57 @@ export function PanelIntelligenceDashboard({
   const sparkScores = avgScore === null ? [] : [avgScore]
   const sparkIssues = panelsWithIssues.length === 0 ? [] : [Math.min(100, Math.round((panelsWithIssues.length / Math.max(filteredResults.length, 1)) * 100))]
   const runOptions = run ? [{ id: run.id, label: formatRunDate(run.completed_at ?? run.created_at) }] : []
+  const revenueRuns = recentRuns.slice(0, 6)
+  const revenueSpark = revenueSparkValues(revenueRuns)
+  const previousRevenueRun = revenueRuns.find((entry) => entry.id !== run?.id && entry.at_risk_revenue_7d !== null && entry.at_risk_revenue_7d !== undefined) ?? null
+  const revenueDelta = run?.at_risk_revenue_7d !== null && run?.at_risk_revenue_7d !== undefined && previousRevenueRun?.at_risk_revenue_7d !== null && previousRevenueRun?.at_risk_revenue_7d !== undefined
+    ? formatDelta(Math.round(run.at_risk_revenue_7d - previousRevenueRun.at_risk_revenue_7d), false)
+    : formatDelta(null, false)
+  const selectedPageTriage = useMemo(() => {
+    if (activeFilter.kind !== 'page') return null
+    return triageMap.get(activeFilter.key) ?? null
+  }, [activeFilter, triageMap])
 
   function setQuickFilter(key: 'action-needed' | 'bot-blocked' | 'assigned' | 'escalated') {
     setActiveFilter({ kind: 'quick', key })
+  }
+
+  function togglePageNode(key: string) {
+    setCollapsedPages((current) => ({ ...current, [key]: !current[key] }))
+  }
+
+  function renderPageGroup(node: PageGroupNode): JSX.Element {
+    const isSelected = activeFilter.kind === 'page' && activeFilter.key === node.key
+    const isCollapsed = collapsedPages[node.key] ?? false
+    const hasChildren = node.children.length > 0
+    const paddingClass = node.depth >= 3 ? 'pl-10 text-[12px]' : node.depth === 2 ? 'pl-6 text-[12px]' : 'pl-2 text-sm'
+    const nodeTriage = triageMap.get(node.key) ?? null
+    const coverageGap = hasCriticalCoverageGap(nodeTriage)
+
+    return (
+      <div key={node.key} className="space-y-1">
+        <button
+          type="button"
+          onClick={() => (hasChildren ? togglePageNode(node.key) : setActiveFilter({ kind: 'page', key: node.key }))}
+          className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left ${paddingClass} ${isSelected ? 'bg-blue-500/10 text-blue-400' : 'text-slate-400 hover:bg-white/5'}`}
+        >
+          {hasChildren ? (
+            isCollapsed ? <ChevronRight className="h-3.5 w-3.5 shrink-0" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+          ) : (
+            <span className="w-3.5 shrink-0" />
+          )}
+          <span className={`h-2 w-2 rounded-full ${pageHealthColor(node.panels)}`} />
+          <span className="flex-1 truncate">{node.label}</span>
+          {coverageGap && <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-red-400" />}
+          <span className="rounded bg-[#1a2332] px-1.5 py-0.5 text-[10px] text-slate-500">{node.panels.length}</span>
+        </button>
+        {hasChildren && !isCollapsed && (
+          <div className="space-y-1">
+            {node.children.map((child: PageGroupNode) => renderPageGroup(child))}
+          </div>
+        )}
+      </div>
+    )
   }
 
   async function refreshReviews() {
@@ -560,6 +847,11 @@ export function PanelIntelligenceDashboard({
     const data = await response.json()
     setSending(false)
     setMessage(response.ok ? 'Report sent' : data.error || 'Failed to send report')
+  }
+
+  function showPage(rowKey: string) {
+    setActiveTab('panel-intelligence')
+    setActiveFilter({ kind: 'page', key: rowKey })
   }
 
   function renderTabPlaceholder(label: string) {
@@ -625,18 +917,7 @@ export function PanelIntelligenceDashboard({
               <span className="flex-1">All pages</span>
               <span className="rounded bg-[#1a2332] px-1.5 py-0.5 text-[10px] text-slate-500">{results.length}</span>
             </button>
-            {pageGroups.map((group) => (
-              <button
-                key={group.key}
-                type="button"
-                onClick={() => setActiveFilter({ kind: 'page', key: group.key })}
-                className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${activeFilter.kind === 'page' && activeFilter.key === group.key ? 'bg-blue-500/10 text-blue-400' : 'text-slate-400 hover:bg-white/5'}`}
-              >
-                <span className={`h-2 w-2 rounded-full ${pageHealthColor(group.panels)}`} />
-                <span className="flex-1 truncate">{group.label}</span>
-                <span className="rounded bg-[#1a2332] px-1.5 py-0.5 text-[10px] text-slate-500">{group.panels.length}</span>
-              </button>
-            ))}
+            {pageGroups.map((group: PageGroupNode) => renderPageGroup(group))}
           </div>
 
           <div className="px-3 pb-1.5 pt-5 text-[10px] font-medium uppercase tracking-wider text-slate-500">Producers</div>
@@ -649,8 +930,7 @@ export function PanelIntelligenceDashboard({
                 className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${activeFilter.kind === 'producer' && activeFilter.owner === group.owner ? 'bg-blue-500/10 text-blue-400' : 'text-slate-400 hover:bg-white/5'}`}
               >
                 <span className="h-2 w-2 rounded-full bg-violet-400" />
-                <span className="flex-1 truncate">{group.owner}</span>
-                <span className="rounded bg-[#1a2332] px-1.5 py-0.5 text-[10px] text-slate-500">{group.count}</span>
+                <span className="flex-1 truncate">{`${group.owner} — ${group.count} panels — avg ${group.avgScore ?? '—'} — ${formatCurrency(group.atRiskRevenue)} at risk`}</span>
               </button>
             ))}
           </div>
@@ -678,8 +958,53 @@ export function PanelIntelligenceDashboard({
         </aside>
 
         <main className="space-y-4 overflow-y-auto bg-[#0a0f1a] p-4">
-          {activeTab !== 'panel-intelligence' ? (
-            renderTabPlaceholder(activeTab === 'link-health' ? 'Link health' : 'Page overview')
+          {activeTab === 'link-health' ? (
+            renderTabPlaceholder('Link health')
+          ) : activeTab === 'page-overview' ? (
+            <section className="rounded-lg border border-[rgba(71,85,105,0.15)] bg-[#111827] p-3">
+              <div className="mb-3 flex items-baseline gap-2">
+                <h3 className="text-xs font-medium text-slate-300">Page overview</h3>
+                <span className="text-xs text-slate-500">{pageOverviewRows.length} pages with triage or scored panels</span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse">
+                  <thead>
+                    <tr>
+                      {['Page', 'Scraper panels', 'AI zones', 'Gaps', 'Issues'].map((heading) => (
+                        <th key={heading} className="border-b border-[rgba(71,85,105,0.15)] px-2 py-1.5 text-left text-[10px] font-medium uppercase tracking-wider text-slate-500">
+                          {heading}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pageOverviewRows.map((row) => {
+                      const gapCount = row.triage?.scraper_coverage_gaps?.length ?? 0
+                      const issueCount = row.triage?.page_level_issues?.length ?? 0
+                      const criticalCoverageGap = hasCriticalCoverageGap(row.triage)
+                      return (
+                        <tr
+                          key={row.key}
+                          className={`cursor-pointer transition-colors hover:bg-blue-500/[0.03] ${criticalCoverageGap ? 'bg-red-500/[0.05]' : ''}`}
+                          onClick={() => showPage(row.key)}
+                        >
+                          <td className="border-b border-[rgba(71,85,105,0.15)] px-2 py-2 text-[13px] text-slate-100">
+                            <div className={`flex items-center gap-2 ${row.depth >= 3 ? 'pl-10' : row.depth === 2 ? 'pl-6' : ''}`}>
+                              {criticalCoverageGap && <AlertTriangle className="h-3.5 w-3.5 text-red-400" />}
+                              <span>{row.label}</span>
+                            </div>
+                          </td>
+                          <td className="border-b border-[rgba(71,85,105,0.15)] px-2 py-2 text-[12px] text-slate-300">{row.triage?.total_panels_scraper ?? row.panelCount}</td>
+                          <td className="border-b border-[rgba(71,85,105,0.15)] px-2 py-2 text-[12px] text-slate-300">{row.triage?.total_zones_ai ?? '—'}</td>
+                          <td className={`border-b border-[rgba(71,85,105,0.15)] px-2 py-2 text-[12px] ${gapCount > 0 ? 'text-amber-300' : 'text-slate-500'}`}>{gapCount}</td>
+                          <td className={`border-b border-[rgba(71,85,105,0.15)] px-2 py-2 text-[12px] ${issueCount > 0 ? 'text-red-300' : 'text-slate-500'}`}>{issueCount}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
           ) : (
             <>
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[rgba(71,85,105,0.15)] bg-[#111827] px-3 py-2">
@@ -727,18 +1052,54 @@ export function PanelIntelligenceDashboard({
                 </div>
                 <div className="rounded-lg border border-[rgba(71,85,105,0.15)] bg-[#111827] p-3">
                   <div className="text-[11px] text-slate-400">At-risk destination revenue</div>
-                  <div className="mt-2 text-xl font-medium text-slate-500">—</div>
-                  <div className="mt-2 inline-flex rounded bg-slate-500/10 px-1.5 py-0.5 text-xs text-slate-400">GA4 pending</div>
-                  <div className="mt-2 text-[10px] text-slate-500 opacity-60">Revenue data from GA4 will appear here once integrated</div>
+                  {run?.at_risk_revenue_7d !== null && run?.at_risk_revenue_7d !== undefined ? (
+                    <>
+                      <div className="mt-2 text-xl font-medium text-slate-100">{formatCurrency(run.at_risk_revenue_7d)}</div>
+                      <div className={`mt-2 inline-flex rounded px-1.5 py-0.5 text-xs ${revenueDelta.className}`}>{revenueDelta.label}</div>
+                      <SparkBars values={revenueSpark} tone="emerald" />
+                    </>
+                  ) : (
+                    <>
+                      <div className="mt-2 text-xl font-medium text-slate-500">—</div>
+                      <div className="mt-2 inline-flex rounded bg-slate-500/10 px-1.5 py-0.5 text-xs text-slate-400">GA4 pending</div>
+                      <div className="mt-2 text-[10px] text-slate-500 opacity-60">Revenue data from GA4 will appear here once integrated</div>
+                    </>
+                  )}
                 </div>
               </div>
+
+              {activeFilter.kind === 'page' && selectedPageTriage && (
+                <section className="rounded-lg border border-[rgba(71,85,105,0.15)] bg-[#111827] p-3 text-xs">
+                  <div className="text-slate-200">
+                    Page triage: AI identified <span className="font-medium text-slate-100">{selectedPageTriage.total_zones_ai ?? 0}</span> marketing zones — scraper found <span className="font-medium text-slate-100">{selectedPageTriage.total_panels_scraper ?? 0}</span> panels
+                  </div>
+                  {selectedPageTriage.scraper_coverage_gaps && selectedPageTriage.scraper_coverage_gaps.length > 0 && (
+                    <div className="mt-3 rounded border border-amber-500/20 bg-amber-500/10 p-2 text-amber-200">
+                      <div className="font-medium">Potential gaps in scraper coverage:</div>
+                      {selectedPageTriage.scraper_coverage_gaps.map((gap, index) => (
+                        <div key={`${selectedPageTriage.id}-gap-${index}`} className="mt-1">- {gap}</div>
+                      ))}
+                    </div>
+                  )}
+                  {selectedPageTriage.page_level_issues && selectedPageTriage.page_level_issues.length > 0 && (
+                    <div className="mt-3 rounded border border-red-500/20 bg-red-500/10 p-2 text-red-200">
+                      <div className="font-medium">Page-level issues:</div>
+                      {selectedPageTriage.page_level_issues.map((issue, index) => (
+                        <div key={`${selectedPageTriage.id}-issue-${index}`} className="mt-1">- {issue}</div>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              )}
 
               {groupedPanels.action_needed.length > 0 && (
                 <TableSection
                   title="Action needed"
                   subtitle="— production errors and empty destinations"
                   titleClassName="text-red-400"
-                  rows={groupedPanels.action_needed}
+                  rows={sortedActionNeededPanels}
+                  sort={issueSort}
+                  onSortChange={setIssueSort}
                   reviewMap={reviewMap}
                   currentUserId={currentUserId}
                   onSelect={(panel) => {
@@ -753,7 +1114,9 @@ export function PanelIntelligenceDashboard({
                   title="Optimization opportunities"
                   subtitle="— destination doesn't fully deliver on panel promise"
                   titleClassName="text-yellow-400"
-                  rows={groupedPanels.optimization}
+                  rows={sortedOptimizationPanels}
+                  sort={issueSort}
+                  onSortChange={setIssueSort}
                   reviewMap={reviewMap}
                   currentUserId={currentUserId}
                   onSelect={(panel) => {
@@ -863,7 +1226,13 @@ export function PanelIntelligenceDashboard({
               </section>
 
               <div className="grid gap-3 md:grid-cols-2">
-                <SectionPlaceholder title="Page-level triage" description="AI pre-scan identifies all marketing zones per page — catches panels the scraper misses" />
+                <section className="rounded-lg border border-[rgba(71,85,105,0.15)] bg-[#111827] p-3">
+                  <div className="text-[11px] text-slate-400">Page-level triage</div>
+                  <div className="mt-2 text-sm text-slate-100">{triage.length} pages analyzed</div>
+                  <div className="mt-1 text-[11px] text-slate-500">
+                    {pageOverviewRows.filter((row) => hasCriticalCoverageGap(row.triage)).length} pages with critical scraper coverage gaps
+                  </div>
+                </section>
                 <SectionPlaceholder title="Review activity" description="Assigned reviews, suppressed panels, comments, and escalation history will appear here" />
               </div>
 
