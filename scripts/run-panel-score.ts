@@ -2,8 +2,6 @@ import { createClient } from '@supabase/supabase-js'
 import Anthropic from '@anthropic-ai/sdk'
 import playwright, { type Response } from 'playwright'
 import { createHash } from 'crypto'
-import { L1_PAGES, type PageConfig } from '../src/config/l1-pages'
-import { scrapeNavigation } from '../src/lib/site-quality/nav-scraper'
 import { fetchDestinationMetrics } from '../src/lib/site-quality/destination-metrics'
 import { triagePage } from '../src/lib/site-quality/page-triage'
 import { buildPass1UserMessage, buildPass2UserMessage, type PanelFacts } from '../src/lib/site-quality/panel-prompts'
@@ -15,7 +13,6 @@ const supabase = createClient(
 )
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-const MAX_DEPTH = Number(process.env.PANEL_SCORE_MAX_DEPTH || 2)
 const MAX_PANELS_PER_PAGE = Number(process.env.PANEL_SCORE_MAX_PANELS_PER_PAGE || 20)
 const MAX_TOTAL_PANELS = Number(process.env.PANEL_SCORE_MAX_TOTAL_PANELS || 300)
 
@@ -85,6 +82,14 @@ interface PreviousPanelResult {
   destination_relevance_keywords: string[] | null
 }
 
+interface TaxonomyPageRow {
+  url: string
+  label: string
+  depth: number
+  parent_url: string | null
+  aor_owner: string | null
+}
+
 function computePanelFingerprint(panelImageUrl: string, outboundUrl: string): string {
   const input = `${panelImageUrl}::${outboundUrl}`.toLowerCase().trim()
   return createHash('sha256').update(input).digest('hex').slice(0, 16)
@@ -100,46 +105,18 @@ function toTitleCase(value: string | undefined) {
   return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase()
 }
 
-function pageKey(url: string) {
-  const nCode = url.match(/N-\d+/i)?.[0]?.toUpperCase()
-  if (nCode) return nCode
-
+function canonicalizeUrl(url: string) {
   try {
     const parsed = new URL(url)
-    const normalizedPath = parsed.pathname.replace(/\/+$/, '') || '/'
-    return `${parsed.origin}${normalizedPath}${parsed.search}`
+    parsed.search = ''
+    parsed.hash = ''
+    if (parsed.pathname !== '/') {
+      parsed.pathname = parsed.pathname.replace(/\/+$/, '')
+    }
+    return parsed.toString()
   } catch {
     return url.trim()
   }
-}
-
-function mergePageConfigs(basePages: PageConfig[], discoveredPages: PageConfig[]) {
-  const merged = new Map<string, PageConfig>()
-
-  for (const page of discoveredPages) {
-    merged.set(pageKey(page.url), page)
-  }
-
-  for (const page of basePages) {
-    merged.set(pageKey(page.url), page)
-  }
-
-  const labelMap = new Map<string, PageConfig>()
-  for (const page of Array.from(merged.values())) labelMap.set(page.label, page)
-
-  return Array.from(merged.values()).map((page) => {
-    if (page.aorOwner) return page
-
-    let parentLabel = page.parentLabel
-    while (parentLabel) {
-      const parent = labelMap.get(parentLabel)
-      if (!parent) break
-      if (parent.aorOwner) return { ...page, aorOwner: parent.aorOwner }
-      parentLabel = parent.parentLabel
-    }
-
-    return page
-  })
 }
 
 function defaultPanelFacts(): PanelFacts {
@@ -250,6 +227,97 @@ function buildSuppressedResult(
     issues: previousResult?.issues ?? [{ type: 'none', detail: 'Scoring suppressed — carried forward from previous run' }],
     aiReasoning: previousResult?.ai_reasoning ?? 'Scoring suppressed by admin',
     outboundPageTitle: '',
+  }
+}
+
+async function refreshTaxonomyFromSubNav(page: Awaited<ReturnType<typeof getAuthenticatedPage>>['page'], pageToScore: TaxonomyPageRow) {
+  if (pageToScore.depth !== 1) return
+
+  try {
+    const subNavLinks = await page.evaluate(() => {
+      const collected: Array<{ url: string; label: string }> = []
+      const selectors = [
+        '.category-nav a',
+        '.subcategory-list a',
+        '.visual-nav a',
+        '.category-links a',
+        'nav.category-navigation a',
+        '[class*="subcategor"] a',
+        '[class*="sub-nav"] a',
+        '[class*="category-grid"] a',
+        '[class*="visual-nav"] a',
+        'main a[href*="/browse/"]',
+        '[role="main"] a[href*="/browse/"]',
+      ]
+
+      for (const selector of selectors) {
+        for (const element of Array.from(document.querySelectorAll(selector))) {
+          if (!(element instanceof HTMLAnchorElement)) continue
+          const label = (element.textContent || '').replace(/\s+/g, ' ').trim()
+          if (!element.href || !label) continue
+          if (!element.href.includes('mynavyexchange.com')) continue
+          collected.push({
+            url: element.href.split('#')[0].split('?')[0],
+            label,
+          })
+        }
+      }
+
+      const seen = new Set<string>()
+      return collected.filter((entry) => {
+        if (seen.has(entry.url)) return false
+        seen.add(entry.url)
+        return true
+      })
+    })
+
+    if (subNavLinks.length === 0) return
+
+    console.log(`  Found ${subNavLinks.length} sub-nav links on ${pageToScore.label}`)
+
+    const now = new Date().toISOString()
+    const urls = subNavLinks.map((link) => canonicalizeUrl(link.url))
+    const { data: existingRows, error: existingError } = await supabase
+      .from('site_taxonomy')
+      .select('url')
+      .in('url', urls)
+
+    if (existingError) throw existingError
+
+    const existingUrls = new Set((existingRows || []).map((row) => row.url))
+    const newPages = subNavLinks
+      .map((link) => ({
+        url: canonicalizeUrl(link.url),
+        label: link.label,
+      }))
+      .filter((link) => !existingUrls.has(link.url))
+      .map((link) => ({
+        url: link.url,
+        label: link.label,
+        depth: pageToScore.depth + 1,
+        parent_url: pageToScore.url,
+        aor_owner: pageToScore.aor_owner,
+        is_monitored: false,
+        status: 'active',
+      }))
+
+    if (newPages.length > 0) {
+      const { error: insertError } = await supabase.from('site_taxonomy').insert(newPages)
+      if (insertError) throw insertError
+      console.log(`  Inserted ${newPages.length} new taxonomy entries`)
+    }
+
+    const existingPages = urls.filter((url) => existingUrls.has(url))
+    if (existingPages.length > 0) {
+      const { error: updateError } = await supabase
+        .from('site_taxonomy')
+        .update({ last_seen_at: now, status: 'active', updated_at: now })
+        .in('url', existingPages)
+
+      if (updateError) throw updateError
+    }
+  } catch (error) {
+    console.warn(`  Sub-nav extraction failed for ${pageToScore.label}:`, error)
   }
 }
 
@@ -676,29 +744,25 @@ async function main() {
 
     const suppressedFingerprints = new Set((suppressions || []).map((suppression) => suppression.panel_fingerprint))
     console.log(`${suppressedFingerprints.size} panels suppressed — will carry forward previous scores`)
+    const { data: pagesToScore, error: pagesError } = await supabase
+      .from('site_taxonomy')
+      .select('url, label, depth, parent_url, aor_owner')
+      .eq('is_monitored', true)
+      .eq('status', 'active')
+      .order('depth', { ascending: true })
+      .order('label', { ascending: true })
 
-    let pagesToScore = [...L1_PAGES]
-    try {
-      const discoveredPages = await scrapeNavigation(page)
-      if (discoveredPages.length > 0) {
-        console.log(`Nav scraper found ${discoveredPages.length} additional pages`)
-        pagesToScore = mergePageConfigs(L1_PAGES, discoveredPages)
-      }
-    } catch (error) {
-      console.error('Nav scraping failed, falling back to hardcoded L1 pages:', error)
+    if (pagesError || !pagesToScore?.length) {
+      console.error('Failed to load monitored pages from site_taxonomy:', pagesError)
+      process.exit(1)
     }
 
-    const pages = pagesToScore
-      .filter((pageConfig) => pageConfig.depth <= MAX_DEPTH)
-      .sort((a, b) => {
-        if (a.depth !== b.depth) return a.depth - b.depth
-        return a.label.localeCompare(b.label)
-      })
-    const depthCounts = pages.reduce((counts, pageConfig) => {
-      counts[pageConfig.depth] = (counts[pageConfig.depth] ?? 0) + 1
-      return counts
-    }, {} as Record<number, number>)
-    console.log(`Scoring ${pages.length} pages (${depthCounts[1] ?? 0} L1, ${depthCounts[2] ?? 0} L2, ${depthCounts[3] ?? 0} L3)`)
+    const pages = (pagesToScore as TaxonomyPageRow[]).map((pageToScore) => ({
+      ...pageToScore,
+      url: canonicalizeUrl(pageToScore.url),
+    }))
+    const pageLabelByUrl = new Map(pages.map((pageToScore) => [pageToScore.url, pageToScore.label]))
+    console.log(`Scoring ${pages.length} monitored pages`)
 
     let totalPanelsProcessed = 0
 
@@ -711,6 +775,7 @@ async function main() {
 
       console.log(`Scraping ${pageConfig.label}...`)
       const scrapeResult = await scrapePanels(page, pageConfig.url, pageConfig.label)
+      await refreshTaxonomyFromSubNav(page, pageConfig)
       const panels = adWeek
         ? scrapeResult.panels.filter((p) => p.adWeek === adWeek)
         : scrapeResult.panels
@@ -719,7 +784,7 @@ async function main() {
 
       if (limitedPanels.length > 0 || isHomepage) {
         try {
-          const fullPageScreenshot = await page.screenshot({ type: 'jpeg', quality: 70, fullPage: true })
+          const fullPageScreenshot = await page.screenshot({ type: 'jpeg', quality: 70, fullPage: false })
           const triage = await triagePage(anthropic, fullPageScreenshot.toString('base64'), pageConfig.url, limitedPanels.length)
           console.log(`  Page triage: AI found ${triage.total_zones_identified} zones, scraper found ${limitedPanels.length} panels`)
           for (const gap of triage.scraper_coverage_gaps) console.warn(`  Coverage gap: ${gap}`)
@@ -768,9 +833,9 @@ async function main() {
           sourcePageUrl: pageConfig.url,
           outboundUrl: panel.outboundHref || pageConfig.url,
           panelImageUrl: panel.imageUrl,
-          aorOwner: pageConfig.aorOwner ? toTitleCase(pageConfig.aorOwner) : null,
+          aorOwner: pageConfig.aor_owner ? toTitleCase(pageConfig.aor_owner) : null,
           pageDepth: pageConfig.depth,
-          parentPageLabel: pageConfig.parentLabel ?? null,
+          parentPageLabel: pageConfig.parent_url ? pageLabelByUrl.get(canonicalizeUrl(pageConfig.parent_url)) ?? null : null,
           adWeek: panel.adWeek,
           adYear: panel.adYear,
           slot: panel.slot,
@@ -809,6 +874,19 @@ async function main() {
           const message = error instanceof Error ? error.message : String(error)
           results.push(buildPanelFailureResult(panelInput, `Scoring failed: ${message}`))
         }
+      }
+
+      const { error: taxonomyUpdateError } = await supabase
+        .from('site_taxonomy')
+        .update({
+          last_scored_at: new Date().toISOString(),
+          panel_count: panels.length,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('url', pageConfig.url)
+
+      if (taxonomyUpdateError) {
+        console.warn(`Failed to update taxonomy metadata for ${pageConfig.label}:`, taxonomyUpdateError)
       }
     }
 

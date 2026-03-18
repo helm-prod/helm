@@ -50,7 +50,7 @@ export async function triagePage(
           type: 'text',
           text:
             `You are analyzing a page from a Navy Exchange e-commerce site (mynavyexchange.com).\n\n` +
-            `This is a full-page screenshot. Identify every marketing panel, banner, and promotional content zone visible on this page.\n\n` +
+            `This is a page screenshot. Identify every marketing panel, banner, and promotional content zone visible on this page.\n\n` +
             `For context: a CSS-based scraper found ${scraperFoundCount} clickable panel images on this page. Your job is to identify ALL marketing content, including anything the scraper might have missed — such as carousel slides, hero banners, background-image promotions, or embedded promotional sections.\n\n` +
             `For each marketing zone you identify, classify it as:\n` +
             `- promotional: Changes with the ad cycle (weekly sales, seasonal offers, limited-time deals)\n` +
