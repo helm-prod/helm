@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
+import { createHash } from 'crypto'
 import type { Response } from 'playwright-core'
 import { L1_PAGES } from '@/config/l1-pages'
 import { buildPass1UserMessage, buildPass2UserMessage, type PanelFacts } from './panel-prompts'
@@ -65,11 +66,17 @@ export interface PanelScoreResult {
   redirectCount?: number
   productCountOnDestination?: number | null
   isOutOfStock?: boolean
+  panelFingerprint: string
   score: number | null
   issues: Array<{ type: PanelIssueType; detail: string }>
   aiReasoning: string
   outboundPageTitle: string
   panelImageUrl: string
+}
+
+function computePanelFingerprint(panelImageUrl: string, outboundUrl: string): string {
+  const input = `${panelImageUrl}::${outboundUrl}`.toLowerCase().trim()
+  return createHash('sha256').update(input).digest('hex').slice(0, 16)
 }
 
 function parseClaudeJson(raw: string) {
@@ -133,6 +140,7 @@ function buildBaseResult(panel: PanelInput) {
     isStale: panel.isStale,
     categoryFolder: panel.categoryFolder,
     panelImageUrl: panel.panelImageUrl,
+    panelFingerprint: computePanelFingerprint(panel.panelImageUrl, panel.outboundUrl),
   }
 }
 

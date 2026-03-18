@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import Anthropic from '@anthropic-ai/sdk'
 import playwright, { type Response } from 'playwright'
+import { createHash } from 'crypto'
 import { L1_PAGES } from '../src/config/l1-pages'
 import { buildPass1UserMessage, buildPass2UserMessage, type PanelFacts } from '../src/lib/site-quality/panel-prompts'
 import { scrapePanels } from '../src/lib/site-quality/panel-scraper'
@@ -56,10 +57,16 @@ interface ScoredPanelResult {
   redirectCount?: number
   productCountOnDestination?: number | null
   isOutOfStock?: boolean
+  panelFingerprint: string
   score: number | null
   issues: Array<{ type: PanelIssueType; detail: string }>
   aiReasoning: string
   outboundPageTitle: string
+}
+
+function computePanelFingerprint(panelImageUrl: string, outboundUrl: string): string {
+  const input = `${panelImageUrl}::${outboundUrl}`.toLowerCase().trim()
+  return createHash('sha256').update(input).digest('hex').slice(0, 16)
 }
 
 function normalizeMediaType(value: string): 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp' {
@@ -127,6 +134,7 @@ function buildBaseResult(panel: {
 }) {
   return {
     ...panel,
+    panelFingerprint: computePanelFingerprint(panel.panelImageUrl, panel.outboundUrl),
   }
 }
 
@@ -627,6 +635,7 @@ async function main() {
         redirect_count: item.redirectCount ?? 0,
         product_count_on_destination: item.productCountOnDestination ?? null,
         is_out_of_stock: item.isOutOfStock ?? false,
+        panel_fingerprint: item.panelFingerprint,
         score: item.score ?? null,
         issues: item.issues,
         ai_reasoning: item.aiReasoning,
