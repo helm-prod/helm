@@ -676,8 +676,19 @@ async function main() {
 
     const suppressedFingerprints = new Set((suppressions || []).map((suppression) => suppression.panel_fingerprint))
     console.log(`${suppressedFingerprints.size} panels suppressed — will carry forward previous scores`)
-    const discoveredPages = await scrapeNavigation(page)
-    const pages = mergePageConfigs(L1_PAGES, discoveredPages)
+
+    let pagesToScore = [...L1_PAGES]
+    try {
+      const discoveredPages = await scrapeNavigation(page)
+      if (discoveredPages.length > 0) {
+        console.log(`Nav scraper found ${discoveredPages.length} additional pages`)
+        pagesToScore = mergePageConfigs(L1_PAGES, discoveredPages)
+      }
+    } catch (error) {
+      console.error('Nav scraping failed, falling back to hardcoded L1 pages:', error)
+    }
+
+    const pages = pagesToScore
       .filter((pageConfig) => pageConfig.depth <= MAX_DEPTH)
       .sort((a, b) => {
         if (a.depth !== b.depth) return a.depth - b.depth
@@ -707,29 +718,33 @@ async function main() {
       const isHomepage = pageConfig.depth === 0 || pageConfig.url === 'https://www.mynavyexchange.com'
 
       if (limitedPanels.length > 0 || isHomepage) {
-        const fullPageScreenshot = await page.screenshot({ type: 'jpeg', quality: 70, fullPage: true })
-        const triage = await triagePage(anthropic, fullPageScreenshot.toString('base64'), pageConfig.url, limitedPanels.length)
-        console.log(`  Page triage: AI found ${triage.total_zones_identified} zones, scraper found ${limitedPanels.length} panels`)
-        for (const gap of triage.scraper_coverage_gaps) console.warn(`  Coverage gap: ${gap}`)
-        for (const issue of triage.page_level_issues) console.warn(`  Page issue: ${issue}`)
-        if (triage.total_zones_identified > 0 && limitedPanels.length === 0) {
-          console.warn(`WARNING: ${pageConfig.label} has ${triage.total_zones_identified} marketing zones but scraper found 0 panels`)
-        }
+        try {
+          const fullPageScreenshot = await page.screenshot({ type: 'jpeg', quality: 70, fullPage: true })
+          const triage = await triagePage(anthropic, fullPageScreenshot.toString('base64'), pageConfig.url, limitedPanels.length)
+          console.log(`  Page triage: AI found ${triage.total_zones_identified} zones, scraper found ${limitedPanels.length} panels`)
+          for (const gap of triage.scraper_coverage_gaps) console.warn(`  Coverage gap: ${gap}`)
+          for (const issue of triage.page_level_issues) console.warn(`  Page issue: ${issue}`)
+          if (triage.total_zones_identified > 0 && limitedPanels.length === 0) {
+            console.warn(`WARNING: ${pageConfig.label} has ${triage.total_zones_identified} marketing zones but scraper found 0 panels`)
+          }
 
-        const { error: triageInsertError } = await supabase.from('site_quality_page_triage').insert({
-          run_id: runId,
-          page_url: triage.page_url,
-          page_label: pageConfig.label,
-          screenshot_taken: true,
-          total_zones_ai: triage.total_zones_identified,
-          total_panels_scraper: limitedPanels.length,
-          zones: triage.zones,
-          page_level_issues: triage.page_level_issues,
-          scraper_coverage_gaps: triage.scraper_coverage_gaps,
-        })
+          const { error: triageInsertError } = await supabase.from('site_quality_page_triage').insert({
+            run_id: runId,
+            page_url: triage.page_url,
+            page_label: pageConfig.label,
+            screenshot_taken: true,
+            total_zones_ai: triage.total_zones_identified,
+            total_panels_scraper: limitedPanels.length,
+            zones: triage.zones,
+            page_level_issues: triage.page_level_issues,
+            scraper_coverage_gaps: triage.scraper_coverage_gaps,
+          })
 
-        if (triageInsertError) {
-          throw new Error(`Failed to insert page triage for ${pageConfig.label}: ${triageInsertError.message}`)
+          if (triageInsertError) {
+            throw new Error(`Failed to insert page triage for ${pageConfig.label}: ${triageInsertError.message}`)
+          }
+        } catch (error) {
+          console.error(`Page triage failed for ${pageConfig.url}:`, error)
         }
       } else {
         console.log(`  Skipping page triage for ${pageConfig.label} — no scraped panels`)

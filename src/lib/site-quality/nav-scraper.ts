@@ -64,62 +64,59 @@ export async function scrapeNavigation(page: Page): Promise<PageConfig[]> {
   await openNavigation(page)
 
   const rawLinks = await page.evaluate(() => {
-    const roots = Array.from(document.querySelectorAll('.main-nav, #main-nav, nav[role="navigation"], nav, [class*="menu"], [class*="nav"]'))
-    const scopeRoots = roots.length > 0 ? roots : [document.body]
-
-    function normalize(value: string) {
-      return value.replace(/\s+/g, ' ').trim()
-    }
-
-    function inferDepth(anchor: HTMLAnchorElement, root: Element) {
-      let depth = 1
-      let node: Element | null = anchor.closest('li')
-      while (node && node !== root) {
-        const parentList = node.parentElement?.closest('li')
-        if (!parentList) break
-        depth += 1
-        node = parentList
-      }
-      return depth
-    }
-
-    function inferParentLabel(anchor: HTMLAnchorElement, root: Element) {
-      let node: Element | null = anchor.closest('li')?.parentElement?.closest('li') ?? null
-      while (node && node !== root) {
-        const parentAnchor = node.querySelector(':scope > a, :scope > button, :scope > [role="button"]')
-        const label = normalize(parentAnchor?.textContent || '')
-        if (label) return label
-        node = node.parentElement?.closest('li') ?? null
-      }
-      return undefined
-    }
-
-    const results: RawNavLink[] = []
+    const links: Array<{ href: string; label: string; depth: number; parentLabel?: string }> = []
+    const navRoots = Array.from(document.querySelectorAll('.main-nav, #main-nav, nav[role="navigation"], nav, [class*="menu"], [class*="nav"]'))
+    const scopeRoots = navRoots.length > 0 ? navRoots : [document.body]
 
     for (const root of scopeRoots) {
-      const anchors = Array.from(root.querySelectorAll('a[href]')) as HTMLAnchorElement[]
-      for (const anchor of anchors) {
-        const hrefValue = anchor.getAttribute('href') || ''
-        if (!hrefValue || hrefValue.startsWith('#') || hrefValue.startsWith('javascript:')) continue
+      const anchors = Array.from(root.querySelectorAll('a[href]'))
+      for (const element of anchors) {
+        if (!(element instanceof HTMLAnchorElement)) continue
+
+        const hrefValue = element.getAttribute('href') || ''
+        if (!hrefValue || hrefValue === '#' || hrefValue.startsWith('javascript:')) continue
 
         const href = new URL(hrefValue, window.location.href).toString()
-        if (!href.startsWith('https://www.mynavyexchange.com')) continue
+        if (!href.includes('mynavyexchange.com')) continue
+        if (href.includes('/account/') || href.includes('/cart') || href.includes('sign-in')) continue
         if (!href.includes('/browse/') && href !== 'https://www.mynavyexchange.com/' && href !== 'https://www.mynavyexchange.com') continue
 
-        const label = normalize(anchor.textContent || anchor.getAttribute('aria-label') || anchor.getAttribute('title') || '')
-        if (!label || label.length < 2) continue
-        if (/sign in|login|account|track order|help|gift card/i.test(label)) continue
+        const label = (element.textContent || element.getAttribute('aria-label') || element.getAttribute('title') || '')
+          .replace(/\s+/g, ' ')
+          .trim()
+        if (!label || label.length < 2 || label.length >= 100) continue
 
-        results.push({
-          label,
+        let depth = 1
+        let parentLabel: string | undefined
+        const currentLi = element.closest('li')
+        if (currentLi) {
+          const parentLi = currentLi.parentElement?.closest('li') ?? null
+          if (parentLi) {
+            depth = 2
+            const parentAnchor = parentLi.querySelector(':scope > a')
+            const parentText = (parentAnchor?.textContent || '').replace(/\s+/g, ' ').trim()
+            if (parentText) parentLabel = parentText
+
+            const grandparentLi = parentLi.parentElement?.closest('li') ?? null
+            if (grandparentLi) depth = 3
+          }
+        }
+
+        links.push({
           href,
-          depth: inferDepth(anchor, root),
-          parentLabel: inferParentLabel(anchor, root),
+          label,
+          depth,
+          parentLabel,
         })
       }
     }
 
-    return results
+    if (links.length === 0) {
+      const menuButton = document.querySelector('button[aria-label*="menu"], .hamburger, .nav-toggle, [data-testid*="menu"]')
+      if (menuButton instanceof HTMLElement) menuButton.click()
+    }
+
+    return links
   })
 
   const deduped = new Map<string, PageConfig>()
