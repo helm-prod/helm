@@ -2,11 +2,21 @@ import { createClient } from '@supabase/supabase-js'
 import playwright from 'playwright'
 import { L1_PAGES } from '../src/config/l1-pages'
 
-interface DiscoveredTaxonomyLink {
-  url: string
+interface RawTaxonomyEntry {
+  panelId: string
   label: string
+  url: string
   depth: number
-  parent_url: string | null
+  parentPanelId: string | null
+}
+
+interface NormalizedTaxonomyEntry {
+  panelId: string
+  label: string
+  url: string
+  depth: number
+  parentUrl: string | null
+  aorOwner: string | null
 }
 
 const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
@@ -17,20 +27,22 @@ function canonicalizeUrl(url: string) {
     parsed.search = ''
     parsed.hash = ''
     if (parsed.pathname !== '/') parsed.pathname = parsed.pathname.replace(/\/+$/, '')
+    parsed.protocol = 'https:'
     return parsed.toString()
   } catch {
     return url.trim()
   }
 }
 
-function resolveAorOwner(url: string, pagesByUrl: Map<string, DiscoveredTaxonomyLink>) {
-  const l1OwnerMap = new Map(L1_PAGES.map((page) => [canonicalizeUrl(page.url), page.aorOwner ?? null]))
-  let currentUrl: string | null = canonicalizeUrl(url)
+function resolveAorOwner(entry: RawTaxonomyEntry, byPanelId: Map<string, RawTaxonomyEntry>) {
+  const l1OwnerByLabel = new Map(L1_PAGES.map((page) => [page.label.toLowerCase(), page.aorOwner ?? null]))
+  let current: RawTaxonomyEntry | undefined = entry
 
-  while (currentUrl) {
-    const knownOwner = l1OwnerMap.get(currentUrl)
-    if (knownOwner) return knownOwner
-    currentUrl = pagesByUrl.get(currentUrl)?.parent_url ?? null
+  while (current) {
+    if (current.depth === 1) {
+      return l1OwnerByLabel.get(current.label.toLowerCase()) ?? null
+    }
+    current = current.parentPanelId ? byPanelId.get(current.parentPanelId) : undefined
   }
 
   return null
@@ -54,144 +66,164 @@ async function main() {
 
     const page = await context.newPage()
     await page.goto('https://www.mynavyexchange.com', { waitUntil: 'domcontentloaded', timeout: 30000 })
-    await page.waitForTimeout(2000)
+    await page.waitForSelector('[id^="category-id-"]', { timeout: 30000 })
+    await page.waitForTimeout(1000)
 
-    const menuSelectors = [
-      'button[aria-label*="menu" i]',
-      '.hamburger',
-      '.nav-toggle',
-      '[data-testid*="menu"]',
-    ]
+    const taxonomy = await page.evaluate(() => {
+      const panels = document.querySelectorAll('[id^="category-id-"]')
+      const results: Array<{
+        panelId: string
+        label: string
+        url: string
+        depth: number
+        parentPanelId: string | null
+      }> = []
 
-    let menuOpened = false
-    for (const selector of menuSelectors) {
-      const trigger = page.locator(selector).first()
-      if (await trigger.count().catch(() => 0)) {
-        const visible = await trigger.isVisible().catch(() => false)
-        if (!visible) continue
-        await trigger.click({ force: true }).catch(() => {})
-        await page.waitForTimeout(1000)
-        menuOpened = true
-        break
-      }
-    }
+      panels.forEach((panel) => {
+        const id = panel.id
+        const firstLink = panel.querySelector('a')
+        if (!firstLink || !(firstLink instanceof HTMLAnchorElement)) return
 
-    if (!menuOpened) {
-      throw new Error('Failed to open hamburger menu')
-    }
+        const label = (firstLink.textContent || '')
+          .replace('Shop All', '')
+          .replace(/\n/g, '')
+          .trim()
+        const url = firstLink.href
 
-    const discoveredLinks = await page.evaluate(() => {
-      const results: Array<{ url: string; label: string; depth: number; parent_url: string | null }> = []
-      const roots = Array.from(document.querySelectorAll('.main-nav, #main-nav, nav[role="navigation"], nav, [class*="menu"], [class*="nav"]'))
-      const scopeRoots = roots.length > 0 ? roots : [document.body]
+        if (!url || url === 'https://www.mynavyexchange.com/' || url === `${window.location.origin}/`) return
 
-      for (const root of scopeRoots) {
-        for (const element of Array.from(root.querySelectorAll('a[href]'))) {
-          if (!(element instanceof HTMLAnchorElement)) continue
-          const hrefValue = element.getAttribute('href') || ''
-          if (!hrefValue || hrefValue === '#' || hrefValue.startsWith('javascript:')) continue
+        const parts = id.replace('category-id-', '').split('-')
+        let depth: number
+        if (parts.length === 1) depth = 1
+        else if (parts.length === 3) depth = 2
+        else if (parts.length === 5) depth = 3
+        else depth = Math.ceil(parts.length / 2)
 
-          const href = new URL(hrefValue, window.location.href).toString().split('#')[0].split('?')[0]
-          if (!href.includes('mynavyexchange.com')) continue
-          if (href.includes('/account/') || href.includes('/cart') || href.includes('sign-in')) continue
-
-          const label = (element.textContent || element.getAttribute('aria-label') || element.getAttribute('title') || '')
-            .replace(/\s+/g, ' ')
-            .trim()
-          if (!label || label.length < 2 || label.length >= 100) continue
-
-          let depth = 1
-          let parentUrl: string | null = null
-          const currentLi = element.closest('li')
-          if (currentLi) {
-            const parentLi = currentLi.parentElement?.closest('li') ?? null
-            if (parentLi) {
-              depth = 2
-              const parentAnchor = parentLi.querySelector(':scope > a')
-              parentUrl = parentAnchor instanceof HTMLAnchorElement ? parentAnchor.href.split('#')[0].split('?')[0] : null
-
-              const grandparentLi = parentLi.parentElement?.closest('li') ?? null
-              if (grandparentLi) depth = 3
-            }
-          }
-
-          results.push({
-            url: href,
-            label,
-            depth,
-            parent_url: parentUrl,
-          })
+        let parentPanelId: string | null = null
+        if (parts.length >= 3) {
+          parentPanelId = `category-id-${parts.slice(0, -2).join('-')}`
         }
-      }
 
-      const seen = new Set<string>()
-      return results.filter((entry) => {
-        if (seen.has(entry.url)) return false
-        seen.add(entry.url)
-        return true
+        results.push({ panelId: id, label, url, depth, parentPanelId })
       })
+
+      panels.forEach((panel) => {
+        const parts = panel.id.replace('category-id-', '').split('-')
+        if (parts.length !== 3) return
+
+        const links = panel.querySelectorAll('a')
+        Array.from(links).forEach((link, index) => {
+          if (!(link instanceof HTMLAnchorElement)) return
+          if (index === 0) return
+
+          const href = link.href
+          const hasDataCategory = link.hasAttribute('data-category')
+          if (
+            href &&
+            href !== 'https://www.mynavyexchange.com/' &&
+            href !== `${window.location.origin}/` &&
+            !hasDataCategory &&
+            href.includes('/browse/')
+          ) {
+            const leafLabel = (link.textContent || '').trim()
+            if (!leafLabel) return
+            results.push({
+              panelId: '',
+              label: leafLabel,
+              url: href,
+              depth: 3,
+              parentPanelId: panel.id,
+            })
+          }
+        })
+      })
+
+      return results
     })
 
-    if (discoveredLinks.length === 0) {
-      throw new Error('No taxonomy links found in hamburger menu')
+    if (taxonomy.length === 0) {
+      throw new Error('No taxonomy entries found in static category panels')
     }
 
-    const canonicalLinks = discoveredLinks.map((link) => ({
-      ...link,
-      url: canonicalizeUrl(link.url),
-      parent_url: link.parent_url ? canonicalizeUrl(link.parent_url) : null,
-    }))
-    const pagesByUrl = new Map(canonicalLinks.map((link) => [link.url, link]))
+    const byPanelId = new Map(taxonomy.filter((entry) => entry.panelId).map((entry) => [entry.panelId, entry]))
+    const normalized = new Map<string, NormalizedTaxonomyEntry>()
+
+    for (const entry of taxonomy) {
+      const url = canonicalizeUrl(entry.url)
+      const parentUrl = entry.parentPanelId ? canonicalizeUrl(byPanelId.get(entry.parentPanelId)?.url || '') || null : null
+      if (!url.includes('/browse/')) continue
+
+      const existing = normalized.get(url)
+      const candidate: NormalizedTaxonomyEntry = {
+        panelId: entry.panelId,
+        label: entry.label,
+        url,
+        depth: entry.depth,
+        parentUrl: parentUrl && parentUrl !== url ? parentUrl : null,
+        aorOwner: resolveAorOwner(entry, byPanelId),
+      }
+
+      if (!existing || candidate.depth < existing.depth) {
+        normalized.set(url, candidate)
+      }
+    }
+
+    const entries = Array.from(normalized.values())
     const now = new Date().toISOString()
 
     const { data: existingRows, error: existingError } = await supabase
       .from('site_taxonomy')
-      .select('url')
+      .select('url, aor_owner')
 
     if (existingError) throw existingError
 
-    const existingUrls = new Set((existingRows || []).map((row) => canonicalizeUrl(row.url)))
-    const newRows = canonicalLinks
-      .filter((link) => !existingUrls.has(link.url))
-      .map((link) => ({
-        url: link.url,
-        label: link.label,
-        depth: link.depth,
-        parent_url: link.parent_url,
-        aor_owner: resolveAorOwner(link.url, pagesByUrl),
-        is_monitored: false,
-        first_seen_at: now,
-        last_seen_at: now,
-        status: 'active',
-        updated_at: now,
-      }))
+    const existingMap = new Map((existingRows || []).map((row) => [canonicalizeUrl(row.url), row]))
+    const newRows: NormalizedTaxonomyEntry[] = []
+    const updateRows: NormalizedTaxonomyEntry[] = []
 
-    const updateRows = canonicalLinks
-      .filter((link) => existingUrls.has(link.url))
-      .map((link) => ({
-        url: link.url,
-        label: link.label,
-        depth: link.depth,
-        parent_url: link.parent_url,
-        aor_owner: resolveAorOwner(link.url, pagesByUrl),
-        last_seen_at: now,
-        status: 'active',
-        updated_at: now,
-      }))
+    for (const entry of entries) {
+      if (existingMap.has(entry.url)) updateRows.push(entry)
+      else newRows.push(entry)
+    }
 
     if (newRows.length > 0) {
-      const { error: insertError } = await supabase.from('site_taxonomy').insert(newRows)
-      if (insertError) throw insertError
+      for (let index = 0; index < newRows.length; index += 100) {
+        const chunk = newRows.slice(index, index + 100).map((entry) => ({
+          url: entry.url,
+          label: entry.label,
+          depth: entry.depth,
+          parent_url: entry.parentUrl,
+          aor_owner: entry.aorOwner,
+          is_monitored: false,
+          first_seen_at: now,
+          last_seen_at: now,
+          status: 'active',
+          updated_at: now,
+        }))
+        const { error: insertError } = await supabase.from('site_taxonomy').insert(chunk)
+        if (insertError) throw insertError
+      }
     }
 
-    if (updateRows.length > 0) {
-      const { error: upsertError } = await supabase
+    for (const entry of updateRows) {
+      const current = existingMap.get(entry.url)
+      const { error: updateError } = await supabase
         .from('site_taxonomy')
-        .upsert(updateRows, { onConflict: 'url', ignoreDuplicates: false })
-      if (upsertError) throw upsertError
+        .update({
+          label: entry.label,
+          depth: entry.depth,
+          parent_url: entry.parentUrl,
+          last_seen_at: now,
+          status: 'active',
+          updated_at: now,
+          ...(current?.aor_owner ? {} : { aor_owner: entry.aorOwner }),
+        })
+        .eq('url', entry.url)
+
+      if (updateError) throw updateError
     }
 
-    const seenUrls = new Set(canonicalLinks.map((link) => link.url))
+    const seenUrls = new Set(entries.map((entry) => entry.url))
     const { data: activeRows, error: activeError } = await supabase
       .from('site_taxonomy')
       .select('url')
@@ -211,16 +243,16 @@ async function main() {
       if (staleError) throw staleError
     }
 
-    const depthCounts = canonicalLinks.reduce((counts, link) => {
-      counts[link.depth] = (counts[link.depth] ?? 0) + 1
+    const depthCounts = entries.reduce((counts, entry) => {
+      counts[entry.depth] = (counts[entry.depth] ?? 0) + 1
       return counts
     }, {} as Record<number, number>)
 
-    console.log(`Discovered ${canonicalLinks.length} taxonomy pages`)
-    console.log(`New pages added: ${newRows.length}`)
-    console.log(`Pages updated: ${updateRows.length}`)
-    console.log(`Pages marked stale: ${staleUrls.length}`)
+    console.log(`Total pages discovered: ${entries.length}`)
     console.log(`Depth counts: L1=${depthCounts[1] ?? 0}, L2=${depthCounts[2] ?? 0}, L3=${depthCounts[3] ?? 0}`)
+    console.log(`New pages inserted: ${newRows.length}`)
+    console.log(`Existing pages updated: ${updateRows.length}`)
+    console.log(`Pages marked stale: ${staleUrls.length}`)
   } finally {
     await browser.close()
   }
