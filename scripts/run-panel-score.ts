@@ -776,9 +776,11 @@ async function main() {
       console.log(`Scraping ${pageConfig.label}...`)
       const scrapeResult = await scrapePanels(page, pageConfig.url, pageConfig.label)
       await refreshTaxonomyFromSubNav(page, pageConfig)
+      console.log(`  Ad week filter: ${adWeek || 'none'}`)
       const panels = adWeek
         ? scrapeResult.panels.filter((p) => p.adWeek === adWeek)
         : scrapeResult.panels
+      console.log(`  ${scrapeResult.panels.length} scraped, ${panels.length} after ad-week filter`)
       const limitedPanels = panels.slice(0, MAX_PANELS_PER_PAGE)
       const isHomepage = pageConfig.depth === 0 || pageConfig.url === 'https://www.mynavyexchange.com'
 
