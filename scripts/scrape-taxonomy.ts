@@ -66,7 +66,9 @@ async function main() {
 
     const page = await context.newPage()
     await page.goto('https://www.mynavyexchange.com', { waitUntil: 'domcontentloaded', timeout: 30000 })
-    await page.waitForSelector('[id^="category-id-"]', { timeout: 30000 })
+    await page.waitForSelector('[id^="category-id-"]', { state: 'attached', timeout: 30000 })
+    const panelCount = await page.evaluate(() => document.querySelectorAll('[id^="category-id-"]').length)
+    console.log(`Found ${panelCount} category panels in DOM`)
     await page.waitForTimeout(1000)
 
     const taxonomy = await page.evaluate(() => {
