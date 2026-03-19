@@ -196,7 +196,7 @@ async function main() {
           depth: entry.depth,
           parent_url: entry.parentUrl,
           aor_owner: entry.aorOwner,
-          is_monitored: false,
+          is_monitored: entry.depth <= 2,
           first_seen_at: now,
           last_seen_at: now,
           status: 'active',

@@ -297,7 +297,7 @@ async function refreshTaxonomyFromSubNav(page: Awaited<ReturnType<typeof getAuth
         depth: pageToScore.depth + 1,
         parent_url: pageToScore.url,
         aor_owner: pageToScore.aor_owner,
-        is_monitored: false,
+        is_monitored: (pageToScore.depth + 1) <= 2,
         status: 'active',
       }))
 
