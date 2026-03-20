@@ -33,18 +33,28 @@ interface PageGroupNode {
   key: string
   label: string
   depth: number
-  parentLabel: string | null
+  parentKey: string | null
   panels: PanelResult[]
   children: PageGroupNode[]
+  panelCount: number
+  issueCount: number
+  health: 'red' | 'amber' | 'green' | 'gray'
 }
 
 interface PageOverviewRow {
   key: string
   label: string
   depth: number
-  parentLabel: string | null
+  parentKey: string | null
   triage: SiteQualityPageTriage | null
   panelCount: number
+}
+
+interface TaxonomyEntry {
+  url: string
+  label: string
+  depth: number
+  parent_url: string | null
 }
 
 type PanelSeverity = 'action_needed' | 'optimization' | 'bot_blocked' | 'passing'
@@ -86,6 +96,18 @@ interface AssignableUser {
   full_name: string
   role: string
 }
+
+const GENERIC_TRIAGE_ITEMS = [
+  'carousel',
+  'svg',
+  'hover state',
+  'animated transition',
+  'interactive state',
+  'verint',
+  'survey modal',
+  'text-only promotional',
+  'no image-based text',
+]
 
 function extractPageLabel(url: string): string {
   const configMatch = L1_PAGES.find((page) => page.url === url)
@@ -157,12 +179,38 @@ function scoreColor(score: number | null): string {
   return 'text-red-400'
 }
 
-function pageHealthColor(panels: PanelResult[]): string {
-  const hasRed = panels.some((panel) => panel.issues?.some((issue) => ['wrong_destination', 'dead_link'].includes(issue.type)))
-  if (hasRed) return 'bg-red-400'
-  const hasAmber = panels.some((panel) => panel.issues?.some((issue) => ['empty_destination', 'weak_correlation', 'item_not_found', 'price_mismatch'].includes(issue.type)))
-  if (hasAmber) return 'bg-amber-400'
-  return 'bg-emerald-400'
+function canonicalizePageUrl(url: string | null | undefined) {
+  if (!url) return ''
+  try {
+    const parsed = new URL(url)
+    parsed.search = ''
+    parsed.hash = ''
+    if (parsed.pathname !== '/') parsed.pathname = parsed.pathname.replace(/\/+$/, '')
+    return parsed.toString()
+  } catch {
+    return url.trim()
+  }
+}
+
+function pageHealthState(panels: PanelResult[]): 'red' | 'amber' | 'green' | 'gray' {
+  if (panels.length === 0) return 'gray'
+  const visibleIssues = panels.flatMap((panel) => getVisibleIssues(panel).map((issue) => issue.type))
+  if (visibleIssues.some((type) => ['wrong_destination', 'dead_link', 'empty_destination'].includes(type))) return 'red'
+  if (visibleIssues.some((type) => ['weak_correlation', 'bot_blocked'].includes(type))) return 'amber'
+  return 'green'
+}
+
+function pageHealthColor(state: 'red' | 'amber' | 'green' | 'gray'): string {
+  switch (state) {
+    case 'red':
+      return 'bg-red-400'
+    case 'amber':
+      return 'bg-amber-400'
+    case 'green':
+      return 'bg-emerald-400'
+    default:
+      return 'bg-slate-500'
+  }
 }
 
 function getPageLabel(panel: PanelResult) {
@@ -201,6 +249,8 @@ function sortPageNodes(nodes: PageGroupNode[]): PageGroupNode[] {
   return [...nodes]
     .sort((a, b) => {
       if (a.depth !== b.depth) return a.depth - b.depth
+      if (a.label === 'Other') return 1
+      if (b.label === 'Other') return -1
       if (a.label === 'Homepage') return -1
       if (b.label === 'Homepage') return 1
       return a.label.localeCompare(b.label)
@@ -213,6 +263,13 @@ function sortPageNodes(nodes: PageGroupNode[]): PageGroupNode[] {
 
 function hasCriticalCoverageGap(triage: SiteQualityPageTriage | null | undefined) {
   return Boolean(triage && (triage.total_zones_ai ?? 0) > 0 && (triage.total_panels_scraper ?? 0) === 0)
+}
+
+function filterMeaningfulTriageItems(items: string[] | null | undefined) {
+  return (items ?? []).filter((item) => {
+    const lower = item.toLowerCase()
+    return !GENERIC_TRIAGE_ITEMS.some((generic) => lower.includes(generic))
+  })
 }
 
 function formatRunDate(value: string | null | undefined) {
@@ -449,6 +506,7 @@ export function PanelIntelligenceDashboard({
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
   const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([])
   const [collapsedPages, setCollapsedPages] = useState<Record<string, boolean>>({})
+  const [taxonomy, setTaxonomy] = useState<TaxonomyEntry[]>([])
 
   useEffect(() => {
     if (!runId || !running) return
@@ -492,6 +550,22 @@ export function PanelIntelligenceDashboard({
     }
   }, [])
 
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadTaxonomy() {
+      const response = await fetch('/api/site-taxonomy')
+      const data = await response.json()
+      if (!response.ok || cancelled) return
+      setTaxonomy((data ?? []) as TaxonomyEntry[])
+    }
+
+    void loadTaxonomy()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   const reviewMap = useMemo(() => {
     const map = new Map<string, PanelReview>()
     for (const review of reviews) map.set(review.panel_fingerprint, review)
@@ -501,60 +575,73 @@ export function PanelIntelligenceDashboard({
   const triageMap = useMemo(() => {
     const map = new Map<string, SiteQualityPageTriage>()
     for (const entry of triage) {
-      if (!map.has(entry.page_url)) map.set(entry.page_url, entry)
+      const key = canonicalizePageUrl(entry.page_url)
+      if (!map.has(key)) map.set(key, entry)
     }
     return map
   }, [triage])
 
   const pageGroups = useMemo(() => {
-    const map = new Map<string, PageGroupNode>()
+    const pagePanels = new Map<string, PanelResult[]>()
     for (const panel of results) {
-      const key = panel.source_page_url || panel.category_l1
-      const label = getPageLabel(panel)
-      const depth = panel.page_depth ?? (label === 'Homepage' ? 0 : 1)
-      const existing = map.get(key)
-      if (existing) {
-        existing.panels.push(panel)
-      } else {
-        map.set(key, {
-          key,
-          label,
-          depth,
-          parentLabel: panel.parent_page_label ?? null,
-          panels: [panel],
-          children: [],
-        })
-      }
+      const key = canonicalizePageUrl(panel.source_page_url || panel.category_l1)
+      const existing = pagePanels.get(key) ?? []
+      existing.push(panel)
+      pagePanels.set(key, existing)
     }
 
-    for (const entry of triage) {
-      if (map.has(entry.page_url)) continue
-      const configMatch = L1_PAGES.find((page) => page.url === entry.page_url)
-      map.set(entry.page_url, {
-        key: entry.page_url,
-        label: entry.page_label || configMatch?.label || extractPageLabel(entry.page_url),
-        depth: configMatch?.depth ?? (entry.page_label === 'Homepage' ? 0 : 1),
-        parentLabel: configMatch?.parentLabel ?? null,
-        panels: [],
+    const nodeMap = new Map<string, PageGroupNode>()
+    for (const entry of taxonomy) {
+      const key = canonicalizePageUrl(entry.url)
+      nodeMap.set(key, {
+        key,
+        label: entry.label || extractPageLabel(entry.url),
+        depth: entry.depth ?? 1,
+        parentKey: entry.parent_url ? canonicalizePageUrl(entry.parent_url) : null,
+        panels: pagePanels.get(key) ?? [],
         children: [],
+        panelCount: 0,
+        issueCount: 0,
+        health: 'gray',
       })
     }
 
-    const nodes = Array.from(map.values())
-    const labelMap = new Map<string, PageGroupNode[]>()
-    for (const node of nodes) {
-      const matches = labelMap.get(node.label) ?? []
-      matches.push(node)
-      labelMap.set(node.label, matches)
+    const unmapped = new Map<string, PageGroupNode>()
+    for (const panel of results) {
+      const key = canonicalizePageUrl(panel.source_page_url || panel.category_l1)
+      if (!key || nodeMap.has(key) || unmapped.has(key)) continue
+      unmapped.set(key, {
+        key,
+        label: getPageLabel(panel),
+        depth: panel.page_depth ?? (getPageLabel(panel) === 'Homepage' ? 0 : 1),
+        parentKey: null,
+        panels: pagePanels.get(key) ?? [],
+        children: [],
+        panelCount: 0,
+        issueCount: 0,
+        health: 'gray',
+      })
+    }
+
+    for (const entry of triage) {
+      const key = canonicalizePageUrl(entry.page_url)
+      if (!key || nodeMap.has(key) || unmapped.has(key)) continue
+      unmapped.set(key, {
+        key,
+        label: entry.page_label || extractPageLabel(entry.page_url),
+        depth: entry.page_label === 'Homepage' ? 0 : 1,
+        parentKey: null,
+        panels: pagePanels.get(key) ?? [],
+        children: [],
+        panelCount: 0,
+        issueCount: 0,
+        health: 'gray',
+      })
     }
 
     const roots: PageGroupNode[] = []
-    for (const node of nodes) {
-      const possibleParents = node.parentLabel ? labelMap.get(node.parentLabel) ?? [] : []
-      const parent = possibleParents
-        .filter((candidate) => candidate.depth < node.depth)
-        .sort((a, b) => b.depth - a.depth)[0]
-
+    for (const node of Array.from(nodeMap.values())) {
+      const parent = node.parentKey ? nodeMap.get(node.parentKey) : null
       if (parent) {
         parent.children.push(node)
       } else {
@@ -562,14 +649,40 @@ export function PanelIntelligenceDashboard({
       }
     }
 
+    if (unmapped.size > 0) {
+      roots.push({
+        key: '__other__',
+        label: 'Other',
+        depth: 1,
+        parentKey: null,
+        panels: [],
+        children: Array.from(unmapped.values()),
+        panelCount: 0,
+        issueCount: 0,
+        health: 'gray',
+      })
+    }
+
+    const summarizeNode = (node: PageGroupNode) => {
+      const childPanels = node.children.flatMap((child) => {
+        summarizeNode(child)
+        return child.panels
+      })
+      const allPanels = [...node.panels, ...childPanels]
+      node.panelCount = allPanels.length
+      node.issueCount = allPanels.reduce((sum, panel) => sum + getVisibleIssues(panel).length, 0)
+      node.health = pageHealthState(allPanels)
+    }
+
+    for (const root of roots) summarizeNode(root)
     return sortPageNodes(roots)
-  }, [results, triage])
+  }, [results, taxonomy, triage])
 
   const pageOverviewRows = useMemo(() => {
     const rows = new Map<string, PageOverviewRow>()
 
     for (const panel of results) {
-      const key = panel.source_page_url || panel.category_l1
+      const key = canonicalizePageUrl(panel.source_page_url || panel.category_l1)
       if (!key) continue
       const existing = rows.get(key)
       if (existing) {
@@ -579,21 +692,23 @@ export function PanelIntelligenceDashboard({
           key,
           label: getPageLabel(panel),
           depth: panel.page_depth ?? (getPageLabel(panel) === 'Homepage' ? 0 : 1),
-          parentLabel: panel.parent_page_label ?? null,
-          triage: panel.source_page_url ? triageMap.get(panel.source_page_url) ?? null : null,
+          parentKey: null,
+          triage: panel.source_page_url ? triageMap.get(canonicalizePageUrl(panel.source_page_url)) ?? null : null,
           panelCount: 1,
         })
       }
     }
 
+    const taxonomyMap = new Map(taxonomy.map((entry) => [canonicalizePageUrl(entry.url), entry]))
     for (const entry of triage) {
-      const key = entry.page_url
+      const key = canonicalizePageUrl(entry.page_url)
       if (rows.has(key)) continue
+      const taxonomyEntry = taxonomyMap.get(key)
       rows.set(key, {
         key,
         label: entry.page_label || extractPageLabel(entry.page_url),
-        depth: entry.page_label === 'Homepage' ? 0 : 1,
-        parentLabel: null,
+        depth: taxonomyEntry?.depth ?? (entry.page_label === 'Homepage' ? 0 : 1),
+        parentKey: taxonomyEntry?.parent_url ? canonicalizePageUrl(taxonomyEntry.parent_url) : null,
         triage: entry,
         panelCount: entry.total_panels_scraper ?? 0,
       })
@@ -603,14 +718,14 @@ export function PanelIntelligenceDashboard({
       if (a.depth !== b.depth) return a.depth - b.depth
       return a.label.localeCompare(b.label)
     })
-  }, [results, triage, triageMap])
+  }, [results, taxonomy, triage, triageMap])
 
   useEffect(() => {
     setCollapsedPages((current) => {
       const next = { ...current }
       const visit = (nodes: PageGroupNode[]) => {
         for (const node of nodes) {
-          if (node.children.length > 0 && !(node.key in next)) next[node.key] = false
+          if (node.children.length > 0 && !(node.key in next)) next[node.key] = true
           visit(node.children)
         }
       }
@@ -618,6 +733,30 @@ export function PanelIntelligenceDashboard({
       return next
     })
   }, [pageGroups])
+
+  useEffect(() => {
+    if (activeFilter.kind !== 'page') return
+
+    const ancestors: string[] = []
+    const visit = (nodes: PageGroupNode[], lineage: string[]) => {
+      for (const node of nodes) {
+        if (node.key === activeFilter.key) {
+          ancestors.push(...lineage)
+          return true
+        }
+        if (visit(node.children, [...lineage, node.key])) return true
+      }
+      return false
+    }
+
+    if (visit(pageGroups, [])) {
+      setCollapsedPages((current) => {
+        const next = { ...current }
+        for (const key of ancestors) next[key] = false
+        return next
+      })
+    }
+  }, [activeFilter, pageGroups])
 
   const producerGroups = useMemo(() => {
     const counts = new Map<string, { count: number; scoreTotal: number; scoredCount: number; atRiskRevenue: number }>()
@@ -766,6 +905,14 @@ export function PanelIntelligenceDashboard({
     if (activeFilter.kind !== 'page') return null
     return triageMap.get(activeFilter.key) ?? null
   }, [activeFilter, triageMap])
+  const selectedPageCoverageGaps = useMemo(
+    () => filterMeaningfulTriageItems(selectedPageTriage?.scraper_coverage_gaps),
+    [selectedPageTriage]
+  )
+  const selectedPageIssues = useMemo(
+    () => filterMeaningfulTriageItems(selectedPageTriage?.page_level_issues),
+    [selectedPageTriage]
+  )
 
   function setQuickFilter(key: 'action-needed' | 'bot-blocked' | 'assigned' | 'escalated') {
     setActiveFilter({ kind: 'quick', key })
@@ -779,27 +926,43 @@ export function PanelIntelligenceDashboard({
     const isSelected = activeFilter.kind === 'page' && activeFilter.key === node.key
     const isCollapsed = collapsedPages[node.key] ?? false
     const hasChildren = node.children.length > 0
-    const paddingClass = node.depth >= 3 ? 'pl-10 text-[12px]' : node.depth === 2 ? 'pl-6 text-[12px]' : 'pl-2 text-sm'
+    const paddingClass = node.depth >= 3 ? 'pl-10' : node.depth === 2 ? 'pl-6' : 'pl-2'
+    const toneClass = node.depth <= 1 ? 'text-slate-200 text-[13px] font-medium' : 'text-slate-400 text-[12px]'
     const nodeTriage = triageMap.get(node.key) ?? null
     const coverageGap = hasCriticalCoverageGap(nodeTriage)
+    const healthClass = pageHealthColor(node.health)
 
     return (
       <div key={node.key} className="space-y-1">
-        <button
-          type="button"
-          onClick={() => (hasChildren ? togglePageNode(node.key) : setActiveFilter({ kind: 'page', key: node.key }))}
-          className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left ${paddingClass} ${isSelected ? 'bg-blue-500/10 text-blue-400' : 'text-slate-400 hover:bg-white/5'}`}
-        >
+        <div className={`flex items-center gap-1 rounded-md py-1 ${paddingClass} ${isSelected ? 'bg-blue-500/10' : 'hover:bg-white/5'}`}>
           {hasChildren ? (
-            isCollapsed ? <ChevronRight className="h-3.5 w-3.5 shrink-0" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+            <button
+              type="button"
+              onClick={() => togglePageNode(node.key)}
+              className="flex h-6 w-6 shrink-0 items-center justify-center text-slate-500 hover:text-slate-300"
+              aria-label={isCollapsed ? `Expand ${node.label}` : `Collapse ${node.label}`}
+            >
+              {isCollapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+            </button>
           ) : (
-            <span className="w-3.5 shrink-0" />
+            <span className="w-6 shrink-0" />
           )}
-          <span className={`h-2 w-2 rounded-full ${pageHealthColor(node.panels)}`} />
-          <span className="flex-1 truncate">{node.label}</span>
-          {coverageGap && <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-red-400" />}
-          <span className="rounded bg-[#1a2332] px-1.5 py-0.5 text-[10px] text-slate-500">{node.panels.length}</span>
-        </button>
+          <button
+            type="button"
+            onClick={() => setActiveFilter({ kind: 'page', key: node.key })}
+            className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1 text-left ${isSelected ? 'text-blue-400' : toneClass}`}
+          >
+            <span className={`h-2 w-2 rounded-full ${healthClass}`} />
+            <span className="truncate">{node.label}</span>
+            {coverageGap && <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-red-400" />}
+          </button>
+          <div className="flex shrink-0 items-center gap-1 pr-2">
+            {node.issueCount > 0 && (
+              <span className="rounded bg-red-500/10 px-1.5 py-0.5 text-[10px] text-red-300">{node.issueCount}</span>
+            )}
+            <span className="rounded bg-[#1a2332] px-1.5 py-0.5 text-[10px] text-slate-500">{node.panelCount}</span>
+          </div>
+        </div>
         {hasChildren && !isCollapsed && (
           <div className="space-y-1">
             {node.children.map((child: PageGroupNode) => renderPageGroup(child))}
@@ -979,8 +1142,8 @@ export function PanelIntelligenceDashboard({
                   </thead>
                   <tbody>
                     {pageOverviewRows.map((row) => {
-                      const gapCount = row.triage?.scraper_coverage_gaps?.length ?? 0
-                      const issueCount = row.triage?.page_level_issues?.length ?? 0
+                      const gapCount = filterMeaningfulTriageItems(row.triage?.scraper_coverage_gaps).length
+                      const issueCount = filterMeaningfulTriageItems(row.triage?.page_level_issues).length
                       const criticalCoverageGap = hasCriticalCoverageGap(row.triage)
                       return (
                         <tr
@@ -1068,23 +1231,23 @@ export function PanelIntelligenceDashboard({
                 </div>
               </div>
 
-              {activeFilter.kind === 'page' && selectedPageTriage && (
+              {activeFilter.kind === 'page' && selectedPageTriage && (selectedPageCoverageGaps.length > 0 || selectedPageIssues.length > 0) && (
                 <section className="rounded-lg border border-[rgba(71,85,105,0.15)] bg-[#111827] p-3 text-xs">
                   <div className="text-slate-200">
                     Page triage: AI identified <span className="font-medium text-slate-100">{selectedPageTriage.total_zones_ai ?? 0}</span> marketing zones — scraper found <span className="font-medium text-slate-100">{selectedPageTriage.total_panels_scraper ?? 0}</span> panels
                   </div>
-                  {selectedPageTriage.scraper_coverage_gaps && selectedPageTriage.scraper_coverage_gaps.length > 0 && (
+                  {selectedPageCoverageGaps.length > 0 && (
                     <div className="mt-3 rounded border border-amber-500/20 bg-amber-500/10 p-2 text-amber-200">
                       <div className="font-medium">Potential gaps in scraper coverage:</div>
-                      {selectedPageTriage.scraper_coverage_gaps.map((gap, index) => (
+                      {selectedPageCoverageGaps.map((gap, index) => (
                         <div key={`${selectedPageTriage.id}-gap-${index}`} className="mt-1">- {gap}</div>
                       ))}
                     </div>
                   )}
-                  {selectedPageTriage.page_level_issues && selectedPageTriage.page_level_issues.length > 0 && (
+                  {selectedPageIssues.length > 0 && (
                     <div className="mt-3 rounded border border-red-500/20 bg-red-500/10 p-2 text-red-200">
                       <div className="font-medium">Page-level issues:</div>
-                      {selectedPageTriage.page_level_issues.map((issue, index) => (
+                      {selectedPageIssues.map((issue, index) => (
                         <div key={`${selectedPageTriage.id}-issue-${index}`} className="mt-1">- {issue}</div>
                       ))}
                     </div>

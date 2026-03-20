@@ -65,6 +65,14 @@ export function parsePanelUrl(src: string): ParsedPanelUrl | null {
 
 export async function scrapePanels(page: Page, url: string, label: string): Promise<PanelScrapeResult> {
   const scrapedAt = new Date().toISOString()
+  const pathname = (() => {
+    try {
+      return new URL(url).pathname
+    } catch {
+      return ''
+    }
+  })()
+  const isHomepage = pathname === '/' || pathname === ''
 
   try {
     await page.goto(url, { waitUntil: 'domcontentloaded' })
@@ -102,10 +110,12 @@ export async function scrapePanels(page: Page, url: string, label: string): Prom
     const panels: ScrapedPanel[] = []
 
     for (const item of rawPanels) {
-      if (!item.src.includes('/assets/')) continue
+      const w = Math.max(item.naturalWidth || 0, item.width || 0)
+      if (!item.src.includes('/assets/')) {
+        if (!(isHomepage && w > 400 && item.href)) continue
+      }
       if (EXCLUDED_ASSET_MARKERS.some((marker) => item.src.includes(marker))) continue
 
-      const w = Math.max(item.naturalWidth || 0, item.width || 0)
       if (w <= 300) continue
 
       const parsed = parsePanelUrl(item.src)
@@ -124,6 +134,77 @@ export async function scrapePanels(page: Page, url: string, label: string): Prom
         slot: parsed?.slot ?? fallbackSlot,
         isStale: parsed ? parsed.adWeek !== currentWeek : false,
       })
+    }
+
+    if (isHomepage) {
+      const bgPanels = await page.evaluate(() => {
+        const results: Array<{
+          src: string
+          alt: string
+          href: string
+          width: number
+          height: number
+        }> = []
+
+        const elements = document.querySelectorAll('a, [role="link"], [onclick]')
+        elements.forEach((el) => {
+          if (!(el instanceof HTMLElement)) return
+          const styles = window.getComputedStyle(el)
+          if (!styles.backgroundImage || styles.backgroundImage === 'none') return
+
+          const match = styles.backgroundImage.match(/url\(["']?(.*?)["']?\)/i)
+          if (!match?.[1]) return
+
+          let src = ''
+          try {
+            src = new URL(match[1], window.location.href).toString()
+          } catch {
+            return
+          }
+
+          const anchor = el instanceof HTMLAnchorElement ? el : el.closest('a')
+          let href = ''
+          try {
+            href = anchor?.getAttribute('href')
+              ? new URL(anchor.getAttribute('href')!, window.location.href).toString()
+              : ''
+          } catch {}
+
+          if (!src || !href) return
+
+          const rect = el.getBoundingClientRect()
+          results.push({
+            src,
+            alt: el.getAttribute('aria-label') || el.textContent?.trim()?.substring(0, 100) || '',
+            href,
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+          })
+        })
+
+        return results
+      })
+
+      for (const item of bgPanels) {
+        if (item.width <= 200 || item.height <= 50) continue
+        if (EXCLUDED_ASSET_MARKERS.some((marker) => item.src.includes(marker))) continue
+        if (panels.some((panel) => panel.imageUrl === item.src && panel.outboundHref === item.href)) continue
+
+        const parsed = parsePanelUrl(item.src)
+        const fallbackSlot = `slot-bg-${String(panels.length + 1).padStart(2, '0')}`
+
+        panels.push({
+          imageUrl: item.src,
+          altText: item.alt,
+          outboundHref: item.href,
+          categoryFolder: parsed?.categoryFolder ?? 'homepage',
+          level: parsed?.level ?? 'dynamic',
+          adWeek: parsed?.adWeek ?? currentWeek,
+          adYear: parsed?.adYear ?? new Date().getFullYear(),
+          slot: parsed?.slot ?? fallbackSlot,
+          isStale: parsed ? parsed.adWeek !== currentWeek : false,
+        })
+      }
     }
 
     return {
