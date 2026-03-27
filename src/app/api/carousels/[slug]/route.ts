@@ -6,6 +6,7 @@ export const dynamic = 'force-dynamic';
 const STATIC_ALLOWED_ORIGINS = [
   'https://www.mynavyexchange.com',
   'https://mynavyexchange.com',
+  'https://snik.dev',
   'http://localhost:3000',
 ];
 
