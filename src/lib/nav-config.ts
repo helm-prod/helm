@@ -34,6 +34,7 @@ export const NAV_STRUCTURE: SidebarNavItem[] = [
   { slug: 'editor', href: '/editor', label: 'Editor', icon: 'Code' },
   { slug: 'templates', href: '/templates', label: 'Templates', icon: 'Layout' },
   { slug: 'carousels', href: '/carousels', label: 'Carousels', icon: 'GalleryHorizontalEnd' },
+  { slug: 'panels', href: '/panels', label: 'Panels', icon: 'Image' },
   {
     type: 'section',
     id: 'pages',
