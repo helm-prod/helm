@@ -5,7 +5,7 @@ import { Image as ImageIcon, Loader2, Trash2, Upload, Copy, Check } from 'lucide
 import { createClient } from '@/lib/supabase/client'
 import type { Profile } from '@/lib/types/database'
 
-const CDN_BASE_URL = 'https://img.nexweb.dev/storage/v1/object/public/panels/'
+const CDN_BASE_URL = 'https://img.nexweb.dev/'
 const ACCEPTED_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
 const ACCEPTED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
 
